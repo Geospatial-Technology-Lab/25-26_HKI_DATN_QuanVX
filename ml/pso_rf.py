@@ -1,228 +1,336 @@
-import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+import numpy as np
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.metrics import mean_squared_error, r2_score, accuracy_score
-import warnings
-warnings.filterwarnings('ignore')
+from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+import matplotlib.pyplot as plt
+import time
+import joblib
 
-class PSO_RF_Optimizer:
-    def __init__(self, num_particles=15, max_iterations=20):
-        self.num_particles = num_particles
-        self.max_iterations = max_iterations
-        self.w = 0.9  # Inertia weight
-        self.c1 = 2.0  # Cognitive parameter
-        self.c2 = 2.0  # Social parameter
-        
-    def load_data(self, file_path, target_column=None):
-        """Tải và xử lý dữ liệu"""
-        df = pd.read_excel(file_path)
-        
-        # Xử lý missing values - chỉ fill NA cho cột số
-        numeric_columns = df.select_dtypes(include=[np.number]).columns
-        categorical_columns = df.select_dtypes(include=['object']).columns
-        
-        # Fill NA cho cột số bằng mean
-        df[numeric_columns] = df[numeric_columns].fillna(df[numeric_columns].mean())
-        
-        # Fill NA cho cột text bằng mode (giá trị xuất hiện nhiều nhất)
-        for col in categorical_columns:
-            mode_value = df[col].mode().iloc[0] if not df[col].mode().empty else 'Unknown'
-            df[col].fillna(mode_value, inplace=True)
-        
-        # Tự động xác định target column
-        if target_column is None:
-            target_column = df.columns[-1]
-        
-        # Tách features và target
-        X = df.drop(labels=str(target_column), axis=1)
-        y = df[target_column]
-        
-        # Xử lý categorical features
-        le_dict = {}
-        categorical_columns = X.select_dtypes(include=['object']).columns
-        for col in categorical_columns:
-            le = LabelEncoder()
-            X[col] = le.fit_transform(X[col].astype(str))
-            le_dict[col] = le
-        
-        # Xác định task type
-        if y.dtype == 'object' or len(y.unique()) < 20:
-            self.task_type = 'classification'
-            if y.dtype == 'object':
-                self.target_le = LabelEncoder()
-                y = self.target_le.fit_transform(y.astype(str))
-        else:
-            self.task_type = 'regression'
-        
-        # Chia dữ liệu và chuẩn hóa
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(X, y, test_size=0.2)
-        scaler = StandardScaler()
-        self.X_train_scaled = scaler.fit_transform(self.X_train)
-        self.X_test_scaled = scaler.transform(self.X_test)
-        
-        print(f"Dữ liệu: {df.shape} | Task: {self.task_type} | Target: {target_column}")
-        print(f"Features: {X.shape[1]} | Numeric: {len(numeric_columns)} | Categorical: {len(categorical_columns)}")
-        
-    def objective_function(self, params):
-        """Hàm mục tiêu cho PSO"""
-        try:
-            n_estimators = max(1, int(params[0]))
-            max_depth = max(1, int(params[1]))
-            min_samples_split = max(2, int(params[2]))
-            min_samples_leaf = max(1, int(params[3]))
-            
-            if self.task_type == 'classification':
-                model = RandomForestClassifier(
-                    n_estimators=n_estimators, 
-                    max_depth=max_depth,
-                    min_samples_split=min_samples_split, 
-                    min_samples_leaf=min_samples_leaf,
-                    n_jobs=-1
-                )
-                scoring = 'accuracy'
-            else:
-                model = RandomForestRegressor(
-                    n_estimators=n_estimators, 
-                    max_depth=max_depth,
-                    min_samples_split=min_samples_split, 
-                    min_samples_leaf=min_samples_leaf,
-                    n_jobs=-1
-                )
-                scoring = 'neg_mean_squared_error'
-            
-            scores = cross_val_score(model, self.X_train_scaled, self.y_train, cv=3, scoring=scoring)
-            mean_score = scores.mean()
-            
-            if np.isnan(mean_score) or np.isinf(mean_score):
-                return float('inf')
-                
-            return -mean_score  # Minimize
-            
-        except Exception as e:
-            print(f"Error in objective function with params {params}: {str(e)}")
-            return float('inf')
+class PSORandomForestOptimizer:
+    """Tối ưu hóa Bầy đàn Hạt (PSO) cho việc điều chỉnh siêu tham số Random Forest."""
     
-    def optimize(self):
-        """Chạy PSO"""
-        # Định nghĩa bounds: [n_estimators, max_depth, min_samples_split, min_samples_leaf]
-        bounds = [(50, 200), (1, 15), (2, 10), (1, 5)]
+    def __init__(self, X, y, n_particles=30, n_iterations=50):
+        """Khởi tạo bộ tối ưu hóa PSO."""
+        self.X = X
+        self.y = y
+        self.n_particles = n_particles
+        self.n_iterations = n_iterations
         
-        # Khởi tạo particles
-        particles = []
-        for _ in range(self.num_particles):
-            position = np.array([np.random.uniform(b[0], b[1]) for b in bounds])
-            velocity = np.random.uniform(-0.5, 0.5, len(bounds))
-            particles.append({
-                'position': position,
-                'velocity': velocity,
-                'best_pos': position.copy(),
-                'best_fitness': float('inf')
-            })
+        # Chuẩn bị dữ liệu
+        self._prepare_data()
         
-        global_best_pos = None
-        global_best_fitness = float('inf')
+        # Tham số PSO
+        self.w = 0.9    # Trọng số quán tính
+        self.c1 = 2.0   # Tham số nhận thức
+        self.c2 = 2.0   # Tham số xã hội
+        self.w_min = 0.4 # Trọng số quán tính tối thiểu
         
-        print(f"\nBắt đầu PSO: {self.num_particles} particles, {self.max_iterations} iterations")
-        print("-" * 60)
-        
-        for iteration in range(self.max_iterations):
-            # Đánh giá fitness
-            for particle in particles:
-                fitness = self.objective_function(particle['position'])
-                
-                # Cập nhật best của particle
-                if fitness < particle['best_fitness']:
-                    particle['best_fitness'] = fitness
-                    particle['best_pos'] = particle['position'].copy()
-                
-                # Cập nhật global best
-                if fitness < global_best_fitness:
-                    global_best_fitness = fitness
-                    global_best_pos = particle['position'].copy()
-            
-            # Cập nhật velocity và position
-            for particle in particles:
-                w = self.w * (self.max_iterations - iteration) / self.max_iterations
-                r1, r2 = np.random.random(), np.random.random()
-                
-                cognitive = self.c1 * r1 * (particle['best_pos'] - particle['position'])
-                social = self.c2 * r2 * (global_best_pos - particle['position'])
-                
-                particle['velocity'] = w * particle['velocity'] + cognitive + social
-                particle['velocity'] = np.clip(particle['velocity'], -1, 1)
-                particle['position'] += particle['velocity']
-                
-                # Giới hạn position
-                for i, (min_val, max_val) in enumerate(bounds):
-                    particle['position'][i] = np.clip(particle['position'][i], min_val, max_val)
-            
-            # In kết quả mỗi vòng lặp
-            score = -global_best_fitness if self.task_type == 'classification' else np.sqrt(-global_best_fitness)
-            metric = "Accuracy" if self.task_type == 'classification' else "RMSE"
-            print(f"Iteration {iteration+1:2d}: Best {metric} = {score:.4f}")
-        
-        # Kết quả tốt nhất
-        if global_best_pos is None:
-            print("Optimization failed - no valid solution found")
-            return None, None
-            
-        best_params = {
-            'n_estimators': int(global_best_pos[0]),
-            'max_depth': int(global_best_pos[1]),
-            'min_samples_split': int(global_best_pos[2]),
-            'min_samples_leaf': int(global_best_pos[3])
+        # Không gian tìm kiếm tham số - Bộ tham số mở rộng cho Random Forest
+        self.param_ranges = {
+            'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
+            'max_depth': {'type': 'int', 'min': 3, 'max': 50},
+            'min_samples_split': {'type': 'int', 'min': 2, 'max': 20},
+            'min_samples_leaf': {'type': 'int', 'min': 1, 'max': 20},
+            'max_features': {'type': 'choice', 'options': ['sqrt', 'log2', None, 0.3, 0.5, 0.7, 0.9]},
+            'bootstrap': {'type': 'choice', 'options': [True, False]},
+            'max_leaf_nodes': {'type': 'int', 'min': 10, 'max': 1000},
+            'min_impurity_decrease': {'type': 'float', 'min': 0.0, 'max': 0.2},
+            'class_weight': {'type': 'choice', 'options': [None, 'balanced', 'balanced_subsample']},
+            'criterion': {'type': 'choice', 'options': ['gini', 'entropy']}
         }
         
-        print("-" * 60)
-        print("KẾT QUẢ TỐI ƯU:")
-        print(f"Best parameters: {best_params}")
+        # Khởi tạo bầy đàn
+        self._initialize_swarm()
         
-        # Huấn luyện model cuối cùng
-        if self.task_type == 'classification':
-            model = RandomForestClassifier(
-                n_estimators=best_params['n_estimators'],
-                max_depth=best_params['max_depth'],
-                min_samples_split=best_params['min_samples_split'],
-                min_samples_leaf=best_params['min_samples_leaf'],
-                n_jobs=-1
-            )
-        else:
-            model = RandomForestRegressor(
-                n_estimators=best_params['n_estimators'],
-                max_depth=best_params['max_depth'],
-                min_samples_split=best_params['min_samples_split'],
-                min_samples_leaf=best_params['min_samples_leaf'],
-                n_jobs=-1
-            )
-        
-        model.fit(self.X_train_scaled, self.y_train)
-        y_pred = model.predict(self.X_test_scaled)
-        
-        if self.task_type == 'classification':
-            test_score = accuracy_score(self.y_test, y_pred)
-            print(f"Test Accuracy: {test_score:.4f}")
-        else:
-            mse = mean_squared_error(self.y_test, y_pred)
-            r2 = r2_score(self.y_test, y_pred)
-            print(f"Test RMSE: {np.sqrt(mse):.4f}")
-            print(f"Test R²: {r2:.4f}")
-        
-        return best_params, model
-
-# Sử dụng
-if __name__ == "__main__":
-    optimizer = PSO_RF_Optimizer(num_particles=15, max_iterations=20)
+        # Kết quả tối ưu hóa
+        self.global_best_position = {}
+        self.global_best_score = -np.inf
+        self.optimization_history = []
+        self.avg_scores_history = []
     
-    file_path = r"C:\Users\Admin\Downloads\prj\src\flood_training.xlsx"
+    def _prepare_data(self):
+        """Chuẩn bị và chia dữ liệu để huấn luyện."""
+        # Xử lý giá trị thiếu
+        if isinstance(self.X, pd.DataFrame):
+            self.X = self.X.values
+        if isinstance(self.y, pd.Series):
+            self.y = self.y.values
+            
+        # Xử lý NaN
+        imputer = SimpleImputer(strategy='median')
+        self.X = imputer.fit_transform(self.X)
+        
+        # Chia dữ liệu
+        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
+            self.X, self.y, test_size=0.2, random_state=42, stratify=self.y
+        )
+        
+        # Chuẩn hóa dữ liệu
+        self.scaler = StandardScaler()
+        self.X_train_scaled = self.scaler.fit_transform(self.X_train)
+        self.X_test_scaled = self.scaler.transform(self.X_test)
+        
+        print(f"Kích thước dữ liệu huấn luyện: {self.X_train_scaled.shape}")
+        print(f"Kích thước dữ liệu kiểm tra: {self.X_test_scaled.shape}")
+    
+    def _initialize_swarm(self):
+        """Khởi tạo bầy đàn hạt."""
+        self.particles = []
+        
+        for _ in range(self.n_particles):
+            particle = {
+                'position': self._generate_random_params(),
+                'velocity': {},
+                'best_position': {},
+                'best_score': -np.inf
+            }
+            
+            # Khởi tạo vận tốc
+            for param in self.param_ranges:
+                particle['velocity'][param] = 0.0
+            
+            self.particles.append(particle)
+    
+    def _generate_random_params(self):
+        """Tạo bộ tham số ngẫu nhiên."""
+        params = {}
+        for param, range_info in self.param_ranges.items():
+            if range_info['type'] == 'int':
+                params[param] = np.random.randint(range_info['min'], range_info['max'] + 1)
+            elif range_info['type'] == 'float':
+                params[param] = np.random.uniform(range_info['min'], range_info['max'])
+            elif range_info['type'] == 'log_uniform':
+                log_min = np.log10(range_info['min'])
+                log_max = np.log10(range_info['max'])
+                params[param] = 10 ** np.random.uniform(log_min, log_max)
+            elif range_info['type'] == 'choice':
+                params[param] = np.random.choice(range_info['options'])
+            elif range_info['type'] == 'tuple_choice':
+                params[param] = np.random.choice(range_info['options'])
+        
+        return params
+    
+    def _evaluate_particle(self, params):
+        """Đánh giá một hạt (bộ tham số)."""
+        try:
+            # Tạo dictionary chỉ chứa các tham số hợp lệ cho RandomForestClassifier
+            model_params = {}
+            valid_params = [
+                'n_estimators', 'max_depth', 'min_samples_split', 'min_samples_leaf',
+                'max_features', 'bootstrap', 'max_leaf_nodes', 'min_impurity_decrease',
+                'class_weight', 'criterion'
+            ]
+            
+            for param in valid_params:
+                if param in params:
+                    model_params[param] = params[param]
+            
+            rf = RandomForestClassifier(
+                **model_params,
+                random_state=42,
+                n_jobs=-1
+            )
+            
+            # Cross-validation
+            cv_scores = cross_val_score(
+                rf, self.X_train_scaled, self.y_train,
+                cv=3, scoring='f1', n_jobs=-1
+            )
+            
+            return np.mean(cv_scores)
+            
+        except Exception as e:
+            print(f"Lỗi khi đánh giá hạt: {str(e)}")
+            return -np.inf
+    
+    def optimize(self):
+        """Thực hiện tối ưu hóa PSO."""
+        print(f"Bắt đầu tối ưu hóa PSO với {self.n_particles} hạt và {self.n_iterations} vòng lặp...")
+        
+        for iteration in range(self.n_iterations):
+            print(f"\nVòng lặp {iteration + 1}/{self.n_iterations}")
+            
+            # Đánh giá tất cả các hạt
+            scores = []
+            for i, particle in enumerate(self.particles):
+                score = self._evaluate_particle(particle['position'])
+                scores.append(score)
+                
+                # Cập nhật best cá nhân
+                if score > particle['best_score']:
+                    particle['best_score'] = score
+                    particle['best_position'] = particle['position'].copy()
+                
+                # Cập nhật best toàn cục
+                if score > self.global_best_score:
+                    self.global_best_score = score
+                    self.global_best_position = particle['position'].copy()
+                    print(f"*** Tìm thấy giải pháp tốt hơn! Điểm số: {score:.4f} ***")
+            
+            # Lưu lịch sử
+            self.optimization_history.append(self.global_best_score)
+            self.avg_scores_history.append(np.mean(scores))
+            
+            print(f"Điểm số tốt nhất: {self.global_best_score:.4f}")
+            print(f"Điểm số trung bình: {np.mean(scores):.4f}")
+            
+            # Cập nhật vị trí và vận tốc
+            self._update_particles()
+            
+            # Giảm trọng số quán tính
+            self.w = max(self.w_min, self.w - (self.w - self.w_min) / self.n_iterations)
+        
+        print(f"\nTối ưu hóa hoàn thành!")
+        print(f"Điểm số tốt nhất: {self.global_best_score:.4f}")
+        
+        return self.global_best_position, self.global_best_score
+    
+    def _update_particles(self):
+        """Cập nhật vị trí và vận tốc của các hạt."""
+        for particle in self.particles:
+            for param in self.param_ranges:
+                # Chỉ cập nhật tham số số
+                if self.param_ranges[param]['type'] in ['int', 'float', 'log_uniform']:
+                    # Cập nhật vận tốc
+                    r1, r2 = np.random.random(), np.random.random()
+                    
+                    cognitive = self.c1 * r1 * (particle['best_position'][param] - particle['position'][param])
+                    social = self.c2 * r2 * (self.global_best_position[param] - particle['position'][param])
+                    
+                    particle['velocity'][param] = (self.w * particle['velocity'][param] + 
+                                                 cognitive + social)
+                    
+                    # Cập nhật vị trí
+                    particle['position'][param] += particle['velocity'][param]
+                    
+                    # Ràng buộc trong phạm vi
+                    param_range = self.param_ranges[param]
+                    if param_range['type'] == 'log_uniform':
+                        particle['position'][param] = np.clip(particle['position'][param], 
+                                                            param_range['min'], param_range['max'])
+                    else:
+                        particle['position'][param] = np.clip(particle['position'][param], 
+                                                            param_range['min'], param_range['max'])
+                    
+                    # Làm tròn cho tham số integer
+                    if param_range['type'] == 'int':
+                        particle['position'][param] = int(round(particle['position'][param]))
+                        
+                else:
+                    # Đối với tham số categorical, chọn ngẫu nhiên thỉnh thoảng
+                    if np.random.random() < 0.1:  # 10% cơ hội thay đổi
+                        particle['position'][param] = self._generate_random_params()[param]
+    
+    def evaluate_final_model(self):
+        """Đánh giá mô hình cuối cùng trên tập kiểm tra."""
+        if not self.global_best_position:
+            print("Không có mô hình tối ưu!")
+            return None
+        
+        # Tạo dictionary chỉ chứa các tham số hợp lệ cho RandomForestClassifier
+        model_params = {}
+        valid_params = [
+            'n_estimators', 'max_depth', 'min_samples_split', 'min_samples_leaf',
+            'max_features', 'bootstrap', 'max_leaf_nodes', 'min_impurity_decrease',
+            'class_weight', 'criterion'
+        ]
+        
+        for param in valid_params:
+            if param in self.global_best_position:
+                model_params[param] = self.global_best_position[param]
+        
+        # Huấn luyện mô hình tối ưu
+        best_rf = RandomForestClassifier(
+            **model_params,
+            random_state=42,
+            n_jobs=-1
+        )
+        
+        best_rf.fit(self.X_train_scaled, self.y_train)
+        
+        # Dự đoán và đánh giá
+        y_pred = best_rf.predict(self.X_test_scaled)
+        y_prob = best_rf.predict_proba(self.X_test_scaled)[:, 1]
+        
+        test_f1 = f1_score(self.y_test, y_pred)
+        test_auc = roc_auc_score(self.y_test, y_prob)
+        test_acc = accuracy_score(self.y_test, y_pred)
+        
+        print(f"\nKết quả trên tập kiểm tra:")
+        print(f"F1-Score: {test_f1:.4f}")
+        print(f"AUC-ROC: {test_auc:.4f}")
+        print(f"Độ chính xác: {test_acc:.4f}")
+        
+        return {
+            'model': best_rf,
+            'test_f1': test_f1,
+            'test_auc': test_auc,
+            'test_accuracy': test_acc,
+            'best_params': self.global_best_position
+        }
+
+def main():
+    """Hàm chính"""
+    print("Đọc dữ liệu từ file Excel...")
+    
+    # Thay đổi đường dẫn này thành file dữ liệu của bạn
+    file_path = "C:/Users/Admin/Downloads/prj/src/flood_data.xlsx"
     
     try:
-        optimizer.load_data(file_path)
-        best_params, best_model = optimizer.optimize()
+        df = pd.read_excel(file_path)
+        print(f"Đã đọc {len(df)} hàng dữ liệu")
+        
+        # Cột đặc trưng
+        feature_columns = [
+            'Rainfall', 'Elevation', 'Slope', 'Aspect', 'Flow_direction',
+            'Flow_accumulation', 'TWI', 'Distance_to_river', 'Drainage_capacity',
+            'LandCover', 'Imperviousness', 'Surface_temperature'
+        ]
+        
+        # Cột nhãn
+        label_column = 'label_column'  # 1 = lụt, 0 = không lụt
+        
+        # Kiểm tra cột thiếu
+        missing_cols = [col for col in feature_columns + [label_column] if col not in df.columns]
+        if missing_cols:
+            print(f"CẢNH BÁO: Các cột sau không tìm thấy: {missing_cols}")
+            print(f"Các cột có sẵn: {list(df.columns)}")
+            return
+        
+        # Chuẩn bị dữ liệu
+        X = df[feature_columns].values
+        y = df[label_column].values
+        
+        # Khởi tạo và chạy tối ưu hóa PSO
+        optimizer = PSORandomForestOptimizer(X, y, n_particles=20, n_iterations=30)
+        
+        start_time = time.time()
+        best_params, best_score = optimizer.optimize()
+        end_time = time.time()
+        
+        print(f"\nThời gian tối ưu hóa: {end_time - start_time:.2f} giây")
+        
+        if best_params:
+            # Đánh giá mô hình cuối cùng
+            print("\nĐánh giá mô hình cuối cùng trên tập kiểm tra:")
+            final_results = optimizer.evaluate_final_model()
+            
+            if final_results:
+                print(f"\nKết quả cuối cùng:")
+                print(f"F1-Score: {final_results['test_f1']:.4f}")
+                print(f"AUC: {final_results['test_auc']:.4f}")
+                print(f"Độ chính xác: {final_results['test_accuracy']:.4f}")
+        else:
+            print("\nTối ưu hóa thất bại.")
+    
     except FileNotFoundError:
         print(f"Không tìm thấy file: {file_path}")
-        print("Vui lòng kiểm tra lại đường dẫn file.")
+        print("Vui lòng đảm bảo file Excel của bạn tồn tại tại đường dẫn đã chỉ định")
     except Exception as e:
         print(f"Lỗi: {e}")
-        print("Vui lòng kiểm tra lại dữ liệu và thử lại.")
+
+if __name__ == "__main__":
+    main()

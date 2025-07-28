@@ -15,99 +15,119 @@ class XGBRandomizedSearch:
         self.best_params = None
         self.best_score = -np.inf
         
-        # Split data
+        # Chia dữ liệu
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             self.X, self.y, test_size=0.2, stratify=self.y
         )
         
-        # Scale data
+        # Chuẩn hóa dữ liệu
         self.scaler = StandardScaler()
         self.X_train_scaled = self.scaler.fit_transform(self.X_train)
         self.X_test_scaled = self.scaler.transform(self.X_test)
         
-        # XGBoost parameter ranges
+        # Phạm vi tham số XGBoost - Bộ tham số mở rộng
         self.param_ranges = {
-            'n_estimators': {'type': 'int', 'min': 50, 'max': 800},
-            'max_depth': {'type': 'int', 'min': 3, 'max': 10},
+            'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
+            'max_depth': {'type': 'int', 'min': 3, 'max': 15},
             'learning_rate': {'type': 'float', 'min': 0.01, 'max': 0.3},
             'subsample': {'type': 'float', 'min': 0.6, 'max': 1.0},
             'colsample_bytree': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bylevel': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bynode': {'type': 'float', 'min': 0.6, 'max': 1.0},
             'reg_alpha': {'type': 'float', 'min': 0.0, 'max': 1.0},
             'reg_lambda': {'type': 'float', 'min': 0.0, 'max': 1.0},
-            'min_child_weight': {'type': 'int', 'min': 1, 'max': 10}
+            'min_child_weight': {'type': 'int', 'min': 1, 'max': 10},
+            'gamma': {'type': 'float', 'min': 0.0, 'max': 5.0},
+            'max_delta_step': {'type': 'int', 'min': 0, 'max': 10},
+            'scale_pos_weight': {'type': 'float', 'min': 0.5, 'max': 2.0}
         }
     
     def create_random_params(self):
-        """Create random parameter set"""
+        """Tạo bộ tham số ngẫu nhiên"""
         params = {}
         for param, range_info in self.param_ranges.items():
             if range_info['type'] == 'int':
                 params[param] = random.randint(range_info['min'], range_info['max'])
             elif range_info['type'] == 'float':
                 params[param] = random.uniform(range_info['min'], range_info['max'])
+            elif range_info['type'] == 'log_uniform':
+                # Phân phối log-uniform cho các tham số như C và gamma
+                log_min = np.log10(range_info['min'])
+                log_max = np.log10(range_info['max'])
+                params[param] = 10 ** random.uniform(log_min, log_max)
+            elif range_info['type'] == 'choice':
+                params[param] = random.choice(range_info['options'])
+            elif range_info['type'] == 'tuple_choice':
+                params[param] = random.choice(range_info['options'])
         return params
     
     def evaluate_params(self, params):
-        """Evaluate parameter set using cross-validation"""
+        """Đánh giá bộ tham số bằng cách sử dụng kiểm định chéo"""
         try:
+            # Tạo dictionary chỉ chứa các tham số hợp lệ cho XGBClassifier
+            model_params = {}
+            valid_params = [
+                'n_estimators', 'max_depth', 'learning_rate', 'subsample', 
+                'colsample_bytree', 'colsample_bylevel', 'colsample_bynode',
+                'reg_alpha', 'reg_lambda', 'min_child_weight', 'gamma',
+                'max_delta_step', 'scale_pos_weight'
+            ]
+            
+            for param in valid_params:
+                if param in params:
+                    model_params[param] = params[param]
+            
             model = xgb.XGBClassifier(
-                n_estimators=params['n_estimators'],
-                max_depth=params['max_depth'],
-                learning_rate=params['learning_rate'],
-                subsample=params['subsample'],
-                colsample_bytree=params['colsample_bytree'],
-                reg_alpha=params['reg_alpha'],
-                reg_lambda=params['reg_lambda'],
-                min_child_weight=params['min_child_weight'],
+                **model_params,
                 random_state=42,
                 eval_metric='logloss',
                 verbosity=0
             )
             
-            # Cross-validation
+            # Kiểm định chéo
             cv_scores = cross_val_score(model, self.X_train_scaled, self.y_train, 
                                       cv=3, scoring='f1')
             
             return float(np.mean(cv_scores))
             
         except Exception as e:
-            print(f"Error evaluating params: {str(e)}")
+            print(f"Lỗi khi đánh giá tham số: {str(e)}")
             return -np.inf
     
     def search(self):
-        """Main randomized search algorithm"""
-        print("Starting XGBoost Randomized Search...")
-        print(f"Data: {len(self.X)} points, {self.X.shape[1]} features")
-        print(f"Number of iterations: {self.n_iterations}")
+        """Thuật toán tìm kiếm ngẫu nhiên chính"""
+        print("Bắt đầu Tìm kiếm Ngẫu nhiên XGBoost...")
+        print(f"Dữ liệu: {len(self.X)} điểm, {self.X.shape[1]} đặc trưng")
+        print(f"Số lần lặp: {self.n_iterations}")
         
-        # Class distribution
+        # Phân bố lớp
         unique_labels = np.unique(self.y)
         label_counts = np.bincount(self.y.astype(int))
-        print("Class distribution:")
+        print("Phân bố lớp:")
         for label, count in zip(unique_labels, label_counts):
-            print(f"  Class {label}: {count}")
+            print(f"  Lớp {label}: {count}")
         print("-" * 50)
         
-        # Random search loop
+        # Vòng lặp tìm kiếm ngẫu nhiên
         for iteration in range(self.n_iterations):
-            print(f"\nIteration {iteration + 1}/{self.n_iterations}")
+            print(f"\nLần lặp {iteration + 1}/{self.n_iterations}")
             
-            # Generate random parameters
+            # Tạo tham số ngẫu nhiên
             params = self.create_random_params()
             
-            # Evaluate parameters
+            # Đánh giá tham số
             score = self.evaluate_params(params)
             
-            # Update best if improved
+            # Cập nhật tốt nhất nếu cải thiện
             if score > self.best_score:
                 self.best_score = score
                 self.best_params = params.copy()
-                print("*** NEW BEST FOUND! ***")
+                print("*** TÌM THẤY TỐT NHẤT MỚI! ***")
             
-            # Print results
-            print(f"Current score: {score:.4f}")
-            print(f"Best score so far: {self.best_score:.4f}")
-            print("Current parameters:")
+            # In kết quả
+            print(f"Điểm hiện tại: {score:.4f}")
+            print(f"Điểm tốt nhất cho đến nay: {self.best_score:.4f}")
+            print("Tham số hiện tại:")
             for param, value in params.items():
                 if isinstance(value, float):
                     print(f"  {param}: {value:.4f}")
@@ -115,10 +135,10 @@ class XGBRandomizedSearch:
                     print(f"  {param}: {value}")
         
         print("\n" + "=" * 50)
-        print("Randomized Search completed!")
+        print("Tìm kiếm Ngẫu nhiên hoàn thành!")
         if self.best_params is not None:
-            print(f"\nBest score: {self.best_score:.4f}")
-            print("Best parameters:")
+            print(f"\nĐiểm tốt nhất: {self.best_score:.4f}")
+            print("Tham số tốt nhất:")
             for param, value in self.best_params.items():
                 if isinstance(value, float):
                     print(f"  {param}: {value:.4f}")
@@ -128,21 +148,27 @@ class XGBRandomizedSearch:
         return self.best_params, self.best_score
     
     def evaluate_final_model(self):
-        """Evaluate final model on test set"""
+        """Đánh giá mô hình cuối cùng trên tập kiểm tra"""
         if self.best_params is None:
-            print("No optimized model available!")
+            print("Không có mô hình tối ưu nào!")
             return None
         
-        # Train model with best parameters
+        # Tạo dictionary chỉ chứa các tham số hợp lệ cho XGBClassifier
+        model_params = {}
+        valid_params = [
+            'n_estimators', 'max_depth', 'learning_rate', 'subsample', 
+            'colsample_bytree', 'colsample_bylevel', 'colsample_bynode',
+            'reg_alpha', 'reg_lambda', 'min_child_weight', 'gamma',
+            'max_delta_step', 'scale_pos_weight'
+        ]
+        
+        for param in valid_params:
+            if param in self.best_params:
+                model_params[param] = self.best_params[param]
+        
+        # Huấn luyện mô hình với tham số tốt nhất
         best_model = xgb.XGBClassifier(
-            n_estimators=self.best_params['n_estimators'],
-            max_depth=self.best_params['max_depth'],
-            learning_rate=self.best_params['learning_rate'],
-            subsample=self.best_params['subsample'],
-            colsample_bytree=self.best_params['colsample_bytree'],
-            reg_alpha=self.best_params['reg_alpha'],
-            reg_lambda=self.best_params['reg_lambda'],
-            min_child_weight=self.best_params['min_child_weight'],
+            **model_params,
             random_state=42,
             eval_metric='logloss',
             verbosity=0
@@ -150,19 +176,19 @@ class XGBRandomizedSearch:
         
         best_model.fit(self.X_train_scaled, self.y_train)
         
-        # Predict on test set
+        # Dự đoán trên tập kiểm tra
         y_pred = best_model.predict(self.X_test_scaled)
         y_prob = best_model.predict_proba(self.X_test_scaled)[:, 1]
         
-        # Calculate metrics
+        # Tính toán các chỉ số
         test_f1 = f1_score(self.y_test, y_pred)
         test_auc = roc_auc_score(self.y_test, y_prob)
         test_acc = accuracy_score(self.y_test, y_pred)
         
-        print("\nTest Set Results:")
+        print("\nKết quả Tập Kiểm tra:")
         print(f"F1-Score: {test_f1:.4f}")
         print(f"AUC-ROC: {test_auc:.4f}")
-        print(f"Accuracy: {test_acc:.4f}")
+        print(f"Độ chính xác: {test_acc:.4f}")
         
         return {
             'model': best_model,
@@ -173,71 +199,71 @@ class XGBRandomizedSearch:
         }
 
 def main():
-    """Main function"""
-    print("Reading data from Excel file...")
+    """Hàm chính"""
+    print("Đọc dữ liệu từ file Excel...")
     
-    # Change this path to your data file
+    # Thay đổi đường dẫn này thành file dữ liệu của bạn
     file_path = "C:/Users/Admin/Downloads/prj/src/flood_data.xlsx"
     
     try:
         df = pd.read_excel(file_path)
-        print(f"Read {len(df)} rows of data")
+        print(f"Đã đọc {len(df)} hàng dữ liệu")
         
-        # Feature columns
+        # Cột đặc trưng
         feature_columns = [
             'Rainfall', 'Elevation', 'Slope', 'Aspect', 'Flow_direction',
             'Flow_accumulation', 'TWI', 'Distance_to_river', 'Drainage_capacity',
             'LandCover', 'Imperviousness', 'Surface_temperature'
         ]
         
-        # Label column
-        label_column = 'label_column'  # 1 = flood, 0 = no flood
+        # Cột nhãn
+        label_column = 'label_column'  # 1 = lụt, 0 = không lụt
         
-        # Check for missing columns
+        # Kiểm tra cột thiếu
         missing_cols = [col for col in feature_columns + [label_column] if col not in df.columns]
         if missing_cols:
-            print(f"WARNING: Following columns not found: {missing_cols}")
-            print(f"Available columns: {list(df.columns)}")
+            print(f"CẢNH BÁO: Các cột sau không tìm thấy: {missing_cols}")
+            print(f"Các cột có sẵn: {list(df.columns)}")
             return
         
-        # Prepare data
+        # Chuẩn bị dữ liệu
         X = df[feature_columns].values
         y = df[label_column].values
         
-        # Handle missing values
+        # Xử lý giá trị thiếu
         if np.isnan(X).any():
-            print("WARNING: Missing values found in data!")
+            print("CẢNH BÁO: Tìm thấy giá trị thiếu trong dữ liệu!")
             from sklearn.impute import SimpleImputer
             imputer = SimpleImputer(strategy='median')
             X = imputer.fit_transform(X)
         
-        # Initialize and run randomized search
+        # Khởi tạo và chạy tìm kiếm ngẫu nhiên
         searcher = XGBRandomizedSearch(X, y, n_iterations=30)
         
         start_time = time.time()
         best_params, best_score = searcher.search()
         end_time = time.time()
         
-        print(f"\nSearch time: {end_time - start_time:.2f} seconds")
+        print(f"\nThời gian tìm kiếm: {end_time - start_time:.2f} giây")
         
         if best_params is not None:
-            # Evaluate final model
-            print("\nEvaluating final model on test set:")
+            # Đánh giá mô hình cuối cùng
+            print("\nĐánh giá mô hình cuối cùng trên tập kiểm tra:")
             final_results = searcher.evaluate_final_model()
             
             if final_results:
-                print(f"\nFinal Test Results:")
+                print(f"\nKết quả Kiểm tra Cuối cùng:")
                 print(f"F1-Score: {final_results['test_f1']:.4f}")
                 print(f"AUC: {final_results['test_auc']:.4f}")
-                print(f"Accuracy: {final_results['test_accuracy']:.4f}")
+                print(f"Độ chính xác: {final_results['test_accuracy']:.4f}")
         else:
-            print("\nSearch failed to find valid parameters.")
+            print("\nTìm kiếm thất bại trong việc tìm tham số hợp lệ.")
     
     except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        print("Please ensure your Excel file exists at the specified path")
+        print(f"Không tìm thấy file: {file_path}")
+        print("Vui lòng đảm bảo file Excel của bạn tồn tại tại đường dẫn đã chỉ định")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Lỗi: {e}")
 
 if __name__ == "__main__":
     main()

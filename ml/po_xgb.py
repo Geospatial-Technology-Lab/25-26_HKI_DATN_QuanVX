@@ -15,31 +15,37 @@ class PUMAOptimizer:
         self.population_size = population_size
         self.generations = generations
         self.best_individual = None
-        self.best_score = np.inf  # RMSE: lower is better
-        self.best_scores_history = []  # Track best scores for plotting
+        self.best_score = np.inf  # RMSE: giá trị thấp hơn là tốt hơn
+        self.best_scores_history = []  # Theo dõi các điểm số tốt nhất để vẽ biểu đồ
         
-        # Split and scale data
+        # Chia tách và chuẩn hóa dữ liệu
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            self.X, self.y, test_size=0.2, stratify=None  # Remove stratify for regression
+            self.X, self.y, test_size=0.2, stratify=None  # Loại bỏ stratify cho bài toán hồi quy
         )
         self.scaler = StandardScaler()
         self.X_train_scaled = self.scaler.fit_transform(self.X_train)
         self.X_test_scaled = self.scaler.transform(self.X_test)
         
-        # Các tham số cần tối ưu hóa:
+        # Các tham số cần tối ưu hóa - Bộ tham số mở rộng
         self.param_ranges = {
-            'n_estimators': {'type': 'int', 'min': 50, 'max': 500},
+            'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
             'max_depth': {'type': 'int', 'min': 3, 'max': 15},
             'learning_rate': {'type': 'float', 'min': 0.01, 'max': 0.3},
-            'subsample': {'type': 'float', 'min': 0.5, 'max': 1.0},
-            'colsample_bytree': {'type': 'float', 'min': 0.5, 'max': 1.0},
-            'min_child_weight': {'type': 'int', 'min': 1, 'max': 7},
-            'gamma': {'type': 'float', 'min': 0, 'max': 5}
+            'subsample': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bytree': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bylevel': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bynode': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'reg_alpha': {'type': 'float', 'min': 0.0, 'max': 1.0},
+            'reg_lambda': {'type': 'float', 'min': 0.0, 'max': 1.0},
+            'min_child_weight': {'type': 'int', 'min': 1, 'max': 10},
+            'gamma': {'type': 'float', 'min': 0.0, 'max': 5.0},
+            'max_delta_step': {'type': 'int', 'min': 0, 'max': 10},
+            'scale_pos_weight': {'type': 'float', 'min': 0.5, 'max': 2.0}
         }
     
     #Hàm tạo cá thể
     def create_individual(self):
-        """Create a random individual (parameter set)"""
+        """Tạo một cá thể ngẫu nhiên (bộ tham số)"""
         individual = {}
         for param, range_info in self.param_ranges.items():
             if range_info['type'] == 'int':
@@ -50,7 +56,7 @@ class PUMAOptimizer:
 
     #Hàm đánh giá cá thể, sử dụng để tính hàm fitness
     def evaluate_individual(self, individual):
-        """Evaluate fitness of an individual using RMSE (lower is better)"""
+        """Đánh giá fitness của một cá thể sử dụng RMSE (giá trị thấp hơn là tốt hơn)"""
         try:
             model = xgb.XGBRegressor(
                 n_estimators=individual['n_estimators'],
@@ -64,7 +70,7 @@ class PUMAOptimizer:
                 verbosity=0
             )
             
-            # Use train-validation split for consistent evaluation
+            # Sử dụng chia tách train-validation để đánh giá nhất quán
             X_train_val, X_val, y_train_val, y_val = train_test_split(
                 self.X_train_scaled, self.y_train, test_size=0.2, random_state=42
             )
@@ -72,64 +78,64 @@ class PUMAOptimizer:
             model.fit(X_train_val, y_train_val)
             y_pred = model.predict(X_val)
             
-            # Calculate RMSE
+            # Tính toán RMSE
             from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
             rmse = np.sqrt(mean_squared_error(y_val, y_pred))
             mae = mean_absolute_error(y_val, y_pred)
             r2 = r2_score(y_val, y_pred)
             
-            # Store metrics in individual
+            # Lưu trữ các chỉ số trong cá thể
             individual['_metrics'] = {'rmse': rmse, 'mae': mae, 'r2': r2}
-            return rmse  # Return RMSE (lower is better)
+            return rmse  # Trả về RMSE (giá trị thấp hơn là tốt hơn)
         except:
             individual['_metrics'] = {'rmse': np.inf, 'mae': np.inf, 'r2': -np.inf}
             return np.inf
 
     def exploration_phase(self, population, fitness_values):
-        """PUMA Exploration Phase for regression"""
+        """Giai đoạn Khám phá PUMA cho bài toán hồi quy"""
         new_population = []
         new_fitness = []
         used_combinations = set()  # Giúp tránh trùng lặp Solutions
-        pCR = 0.5  # Crossover probability
-        p = 0.1    # Increment value for pCR adjustment
+        pCR = 0.5  # Xác suất lai ghép
+        p = 0.1    # Giá trị gia tăng để điều chỉnh pCR
         
         for i in range(self.population_size):
             current = population[i]
             
-            # Select 6 different solutions randomly
+            # Chọn 6 nghiệm khác nhau một cách ngẫu nhiên
             available_indices = list(range(self.population_size))
             available_indices.remove(i)
             
-            # Handle case where population size is too small
+            # Xử lý trường hợp kích thước quần thể quá nhỏ
             if len(available_indices) < 6:
-                # If not enough individuals, repeat some indices with replacement
+                # Nếu không đủ cá thể, lặp lại một số chỉ số với thay thế
                 selected_indices = random.choices(available_indices, k=6)
             else:
                 selected_indices = random.sample(available_indices, 6)
             
             a, b, c, d, e, f = [population[idx] for idx in selected_indices]
             
-            # Create new solution
+            # Tạo nghiệm mới
             attempts = 0
-            max_attempts = 10  # Limit attempts to avoid infinite loop
+            max_attempts = 10  # Giới hạn số lần thử để tránh vòng lặp vô tận
             while attempts < max_attempts:
-                new_individual = current.copy()  # Start with current solution
+                new_individual = current.copy()  # Bắt đầu với nghiệm hiện tại
                 
-                # Ensure at least one parameter changes by selecting random parameter
+                # Đảm bảo ít nhất một tham số thay đổi bằng cách chọn tham số ngẫu nhiên
                 j0 = random.choice(list(self.param_ranges.keys()))
                 
                 for param, range_info in self.param_ranges.items():
-                    # Always change j0 parameter or based on pCR probability
+                    # Luôn thay đổi tham số j0 hoặc dựa trên xác suất pCR
                     if param == j0 or random.random() <= pCR:
                         if random.random() < 0.5:
-                            # Generate random value with added noise for better diversity
+                            # Tạo giá trị ngẫu nhiên với nhiễu bổ sung để đa dạng hóa tốt hơn
                             range_size = range_info['max'] - range_info['min']
                             noise = random.gauss(0, range_size * 0.1)
                             rand_val = random.random() * range_size + range_info['min'] + noise
                             rand_val = max(range_info['min'], min(range_info['max'], rand_val))
                             new_individual[param] = self._apply_bounds_and_type(param, rand_val)
                         else:
-                            # PUMA exploration equation with proper vector operations
+                            # Phương trình khám phá PUMA với các phép toán vector thích hợp
                             G = 2 * random.random() - 1
                             term1 = a[param] + G * (a[param] - b[param])
                             term2 = G * (((a[param] - b[param]) - (c[param] - d[param])) + 
@@ -137,29 +143,29 @@ class PUMAOptimizer:
                             new_val = term1 + term2
                             new_individual[param] = self._apply_bounds_and_type(param, new_val)
                 
-                # Check if this combination is unique
-                # Only use parameter values, exclude _metrics
+                # Kiểm tra xem tổ hợp này có độc nhất không
+                # Chỉ sử dụng giá trị tham số, loại trừ _metrics
                 param_values = tuple(v for k, v in new_individual.items() if k != '_metrics')
                 if param_values not in used_combinations:
                     used_combinations.add(param_values)
                     break
                 attempts += 1
             
-            # Evaluate and update (RMSE: lower is better)
+            # Đánh giá và cập nhật (RMSE: giá trị thấp hơn là tốt hơn)
             new_fitness_val = self.evaluate_individual(new_individual)
-            if new_fitness_val < fitness_values[i]:  # Lower RMSE is better
+            if new_fitness_val < fitness_values[i]:  # RMSE thấp hơn là tốt hơn
                 new_population.append(new_individual)
                 new_fitness.append(new_fitness_val)
             else:
                 new_population.append(current)
                 new_fitness.append(fitness_values[i])
-                # Update pCR when no improvement
+                # Cập nhật pCR khi không có cải thiện
                 pCR = min(0.9, pCR + p)
         
         return new_population, new_fitness
 
     def _apply_bounds_and_type(self, param, new_val):
-        """Apply bounds and handle data type for parameter"""
+        """Áp dụng giới hạn và xử lý kiểu dữ liệu cho tham số"""
         range_info = self.param_ranges[param]
         clipped_val = np.clip(new_val, range_info['min'], range_info['max'])
         
@@ -169,17 +175,17 @@ class PUMAOptimizer:
             return round(clipped_val, 6)
 
     def exploitation_phase(self, population, fitness_values):
-        """PUMA Exploitation Phase for regression"""
-        Q = 0.67  # Exploitation constant
-        Beta = 2  # Beta constant
+        """Giai đoạn Khai thác PUMA cho bài toán hồi quy"""
+        Q = 0.67  # Hằng số khai thác
+        Beta = 2  # Hằng số Beta
         new_population = []
         new_fitness = []
         
-        # Get best solution (RMSE: lower is better)
+        # Lấy nghiệm tốt nhất (RMSE: giá trị thấp hơn là tốt hơn)
         best_idx = np.argmin(fitness_values)
         best_solution = population[best_idx]
         
-        # Calculate mean position
+        # Tính toán vị trí trung bình
         mbest = {}
         for param in self.param_ranges:
             if self.param_ranges[param]['type'] == 'int':
@@ -194,21 +200,21 @@ class PUMAOptimizer:
             beta1 = 2 * random.random()
             beta2 = np.random.randn(len(self.param_ranges))
             
-            w = np.random.randn(len(self.param_ranges))  # Eq 37
-            v = np.random.randn(len(self.param_ranges))  # Eq 38
+            w = np.random.randn(len(self.param_ranges))  # Phương trình 37
+            v = np.random.randn(len(self.param_ranges))  # Phương trình 38
             
-            # Eq 35
+            # Phương trình 35
             F1 = np.random.randn(len(self.param_ranges)) * np.exp(2 - i * (2/self.generations))
-            # Eq 36
+            # Phương trình 36
             F2 = w * np.power(v, 2) * np.cos((2 * random.random()) * w)
             
-            R_1 = 2 * random.random() - 1  # Eq 34
+            R_1 = 2 * random.random() - 1  # Phương trình 34
             
             if random.random() <= 0.5:
-                # Calculate S1 and S2
+                # Tính toán S1 và S2
                 S1 = 2 * random.random() - 1 + np.random.randn(len(self.param_ranges))
                 
-                # Convert to arrays for vector operations
+                # Chuyển đổi thành mảng cho các phép toán vector
                 current_array = np.array([current[param] for param in self.param_ranges])
                 best_array = np.array([best_solution[param] for param in self.param_ranges])
                 
@@ -216,15 +222,15 @@ class PUMAOptimizer:
                 VEC = S2 / S1
                 
                 if random.random() > Q:
-                    # Eq 32 first part
+                    # Phương trình 32 phần đầu
                     random_sol = random.choice(population)
                     random_array = np.array([random_sol[param] for param in self.param_ranges])
                     new_pos = best_array + beta1 * (np.exp(beta2)) * (random_array - current_array)
                 else:
-                    # Eq 32 second part
+                    # Phương trình 32 phần thứ hai
                     new_pos = beta1 * VEC - best_array
             else:
-                # Eq 33
+                # Phương trình 33
                 r1 = random.randint(0, self.population_size-1)
                 r1_sol = population[r1]
                 r1_array = np.array([r1_sol[param] for param in self.param_ranges])
@@ -234,13 +240,13 @@ class PUMAOptimizer:
                 sign = 1 if random.random() > 0.5 else -1
                 new_pos = (mbest_array * r1_array - sign * current_array) / (1 + (Beta * random.random()))
             
-            # Convert back to dictionary and clip values
+            # Chuyển đổi lại thành từ điển và cắt giá trị
             for j, param in enumerate(self.param_ranges):
                 new_individual[param] = self._apply_bounds_and_type(param, new_pos[j])
             
-            # Evaluate and update (RMSE: lower is better)
+            # Đánh giá và cập nhật (RMSE: giá trị thấp hơn là tốt hơn)
             new_fitness_val = self.evaluate_individual(new_individual)
-            if new_fitness_val < fitness_values[i]:  # Lower RMSE is better
+            if new_fitness_val < fitness_values[i]:  # RMSE thấp hơn là tốt hơn
                 new_population.append(new_individual)
                 new_fitness.append(new_fitness_val)
             else:
@@ -250,28 +256,28 @@ class PUMAOptimizer:
         return new_population, new_fitness
 
     def optimize(self):
-        """Main PUMA optimization algorithm for regression"""
-        # Initialize population
+        """Thuật toán tối ưu hóa PUMA chính cho bài toán hồi quy"""
+        # Khởi tạo quần thể
         population = [self.create_individual() for _ in range(self.population_size)]
         fitness_values = [self.evaluate_individual(ind) for ind in population]
         
-        # Initial best (RMSE: lower is better)
+        # Tốt nhất ban đầu (RMSE: giá trị thấp hơn là tốt hơn)
         best_idx = np.argmin(fitness_values)
         self.best_individual = population[best_idx].copy()
         self.best_score = fitness_values[best_idx]
         initial_best_score = self.best_score
         self.best_scores_history.append(self.best_score)
         
-        # Initialize iteration results tracking
+        # Khởi tạo theo dõi kết quả lặp
         iteration_results = []
         
-        # Parameters for phase selection
-        unselected = [1, 1]  # [Exploration, Exploitation]
+        # Tham số cho việc lựa chọn giai đoạn
+        unselected = [1, 1]  # [Khám phá, Khai thác]
         seq_time_explore = [1, 1, 1]
         seq_time_exploit = [1, 1, 1]
         seq_cost_explore = [0.1, 0.1, 0.1]
         seq_cost_exploit = [0.1, 0.1, 0.1]
-        pf = [0.5, 0.5, 0.3]  # Weights for F1, F2, F3
+        pf = [0.5, 0.5, 0.3]  # Trọng số cho F1, F2, F3
         mega_explor = 0.99
         mega_exploit = 0.99
         f3_explore = 0
@@ -279,33 +285,33 @@ class PUMAOptimizer:
         pf_f3 = [0.01]
         flag_change = 1
         
-        # Unexperienced Phase (first 3 iterations)
+        # Giai đoạn Chưa kinh nghiệm (3 lần lặp đầu tiên)
         for iteration in range(3):
             print(f"Iteration {iteration + 1}/3")
             
-            # Exploration
+            # Khám phá
             pop_explore, fit_explore = self.exploration_phase(population, fitness_values)
-            cost_explore = min(fit_explore)  # Lower RMSE is better
+            cost_explore = min(fit_explore)  # RMSE thấp hơn là tốt hơn
             
-            # Exploitation
+            # Khai thác
             pop_exploit, fit_exploit = self.exploitation_phase(population, fitness_values)
-            cost_exploit = min(fit_exploit)  # Lower RMSE is better
+            cost_exploit = min(fit_exploit)  # RMSE thấp hơn là tốt hơn
             
-            # Combine and select best solutions
+            # Kết hợp và chọn nghiệm tốt nhất
             population = population + pop_explore + pop_exploit
             fitness_values = fitness_values + fit_explore + fit_exploit
-            indices = np.argsort(fitness_values)[:self.population_size]  # Sort ascending (lower RMSE is better)
+            indices = np.argsort(fitness_values)[:self.population_size]  # Sắp xếp tăng dần (RMSE thấp hơn là tốt hơn)
             population = [population[i] for i in indices]
             fitness_values = [fitness_values[i] for i in indices]
             
-            # Update best (lower RMSE is better)
+            # Cập nhật tốt nhất (RMSE thấp hơn là tốt hơn)
             if fitness_values[0] < self.best_score:
                 self.best_score = fitness_values[0]
                 self.best_individual = population[0].copy()
                 print(f"New best RMSE: {self.best_score:.4f}")
                 self.best_scores_history.append(self.best_score)
             
-            # Save iteration results
+            # Lưu kết quả lặp
             iteration_results.append({
                 'iteration': iteration + 1,
                 'best_rmse': self.best_score,
@@ -316,16 +322,16 @@ class PUMAOptimizer:
                 'phase': 'Unexperienced'
             })
         
-        # Initialize sequence costs
+        # Khởi tạo chi phí chuỗi
         seq_cost_explore[0] = max(0.01, abs(initial_best_score - cost_explore))
         seq_cost_exploit[0] = max(0.01, abs(initial_best_score - cost_exploit))
         
-        # Add non-zero costs to PF_F3
+        # Thêm chi phí khác 0 vào PF_F3
         for cost in seq_cost_explore + seq_cost_exploit:
             if cost > 0.01:
                 pf_f3.append(cost)
         
-        # Calculate initial scores
+        # Tính toán điểm số ban đầu
         f1_explore = pf[0] * (seq_cost_explore[0] / seq_time_explore[0])
         f1_exploit = pf[0] * (seq_cost_exploit[0] / seq_time_exploit[0])
         f2_explore = pf[1] * sum(seq_cost_explore) / sum(seq_time_explore)
@@ -333,12 +339,12 @@ class PUMAOptimizer:
         score_explore = pf[0] * f1_explore + pf[1] * f2_explore
         score_exploit = pf[0] * f1_exploit + pf[1] * f2_exploit
         
-        # Experienced Phase
+        # Giai đoạn Có kinh nghiệm
         for iteration in range(3, self.generations):
             print(f"Iteration {iteration + 1}/{self.generations}")
             
             if score_explore > score_exploit:
-                # Exploration
+                # Khám phá
                 population, fitness_values = self.exploration_phase(population, fitness_values)
                 count_select = unselected.copy()
                 unselected[1] += 1
@@ -346,14 +352,14 @@ class PUMAOptimizer:
                 f3_explore = pf[2]
                 f3_exploit += pf[2]
                 
-                # Update sequence costs (lower RMSE is better)
+                # Cập nhật chi phí chuỗi (RMSE thấp hơn là tốt hơn)
                 if fitness_values[0] < self.best_score:
                     cost_diff = abs(self.best_score - fitness_values[0])
                     seq_cost_explore = [max(0.01, cost_diff)] + seq_cost_explore[:2]
                     if cost_diff > 0.01:
                         pf_f3.append(cost_diff)
             else:
-                # Exploitation
+                # Khai thác
                 population, fitness_values = self.exploitation_phase(population, fitness_values)
                 count_select = unselected.copy()
                 unselected[0] += 1
@@ -361,27 +367,27 @@ class PUMAOptimizer:
                 f3_explore += pf[2]
                 f3_exploit = pf[2]
                 
-                # Update sequence costs (lower RMSE is better)
+                # Cập nhật chi phí chuỗi (RMSE thấp hơn là tốt hơn)
                 if fitness_values[0] < self.best_score:
                     cost_diff = abs(self.best_score - fitness_values[0])
                     seq_cost_exploit = [max(0.01, cost_diff)] + seq_cost_exploit[:2]
                     if cost_diff > 0.01:
                         pf_f3.append(cost_diff)
             
-            # Update best solution (lower RMSE is better)
+            # Cập nhật nghiệm tốt nhất (RMSE thấp hơn là tốt hơn)
             if fitness_values[0] < self.best_score:
                 self.best_score = fitness_values[0]
                 self.best_individual = population[0].copy()
                 print(f"New best RMSE: {self.best_score:.4f}")
                 self.best_scores_history.append(self.best_score)
             
-            # Update time sequences if phase changed
+            # Cập nhật chuỗi thời gian nếu giai đoạn thay đổi
             if flag_change != (1 if score_explore > score_exploit else 2):
                 flag_change = 1 if score_explore > score_exploit else 2
                 seq_time_explore = [count_select[0]] + seq_time_explore[:2]
                 seq_time_exploit = [count_select[1]] + seq_time_exploit[:2]
             
-            # Update scores
+            # Cập nhật điểm số
             if score_explore < score_exploit:
                 mega_explor = max(mega_explor - 0.01, 0.01)
                 mega_exploit = 0.99
@@ -401,7 +407,7 @@ class PUMAOptimizer:
             score_explore = (mega_explor * f1_explore) + (mega_explor * f2_explore) + (lmn_explore * min_pf_f3 * f3_explore)
             score_exploit = (mega_exploit * f1_exploit) + (mega_exploit * f2_exploit) + (lmn_exploit * min_pf_f3 * f3_exploit)
             
-            # Save iteration results
+            # Lưu kết quả lặp
             iteration_results.append({
                 'iteration': iteration + 1,
                 'best_rmse': self.best_score,
@@ -427,24 +433,24 @@ def main():
             'LandCover', 'Imperviousness', 'Surface_temperature'
         ]
         
-        label_column = 'label_column'  # Target variable for regression
+        label_column = 'label_column'  # Biến mục tiêu cho bài toán hồi quy
         
-        # Check for missing columns
+        # Kiểm tra cột bị thiếu
         missing_cols = [col for col in feature_columns + [label_column] if col not in df.columns]
         if missing_cols:
             return
         
-        # Prepare data
+        # Chuẩn bị dữ liệu
         X = df[feature_columns].values
         y = df[label_column].values
         
-        # Handle missing values
+        # Xử lý giá trị bị thiếu
         if np.isnan(X).any():
             from sklearn.impute import SimpleImputer
             imputer = SimpleImputer(strategy='median')
             X = imputer.fit_transform(X)
         
-        # Initialize and run PUMA optimizer for XGBoost Regression
+        # Khởi tạo và chạy bộ tối ưu hóa PUMA cho Hồi quy XGBoost
         print("Starting PUMA optimization for regression...")
         optimizer = PUMAOptimizer(X, y, population_size=15, generations=10)
         best_params, best_score = optimizer.optimize()
@@ -453,10 +459,10 @@ def main():
         print(f"Best RMSE score: {best_score:.4f}")
         print("\nBest parameters:")
         for param, value in best_params.items():
-            if param != '_metrics':  # Skip metrics key
+            if param != '_metrics':  # Bỏ qua khóa metrics
                 print(f"  {param}: {value}")
             
-        # Export convergence data to CSV
+        # Xuất dữ liệu hội tụ ra CSV
         convergence_data = pd.DataFrame({
             'Iteration': range(1, len(optimizer.best_scores_history) + 1),
             'Best_RMSE_Score': optimizer.best_scores_history

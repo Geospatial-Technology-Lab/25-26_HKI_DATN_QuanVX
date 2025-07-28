@@ -11,76 +11,90 @@ import joblib
 
 
 class PSOXGBoostOptimizer:
-    """Particle Swarm Optimization for XGBoost hyperparameter tuning."""
+    """Tối ưu hóa Bầy đàn Hạt (PSO) cho việc điều chỉnh siêu tham số XGBoost."""
     
     def __init__(self, X, y, n_particles=30, n_iterations=50):
-        """Initialize PSO optimizer."""
+        """Khởi tạo bộ tối ưu hóa PSO."""
         self.X = X
         self.y = y
         self.n_particles = n_particles
         self.n_iterations = n_iterations
         
-        # Prepare data
+        # Chuẩn bị dữ liệu
         self._prepare_data()
         
-        # PSO parameters
-        self.w = 0.9    # Inertia weight
-        self.c1 = 2.0   # Cognitive parameter
-        self.c2 = 2.0   # Social parameter
-        self.w_min = 0.4 # Minimum inertia weight
+        # Tham số PSO
+        self.w = 0.9    # Trọng số quán tính
+        self.c1 = 2.0   # Tham số nhận thức
+        self.c2 = 2.0   # Tham số xã hội
+        self.w_min = 0.4 # Trọng số quán tính tối thiểu
         
-        # Parameter search space
+        # Không gian tìm kiếm tham số - Bộ tham số mở rộng cho XGBoost
         self.param_ranges = {
-            'n_estimators': {'min': 50, 'max': 300},
-            'max_depth': {'min': 3, 'max': 10},
-            'learning_rate': {'min': 0.01, 'max': 0.3},
-            'subsample': {'min': 0.6, 'max': 1.0},
-            'colsample_bytree': {'min': 0.6, 'max': 1.0},
-            'min_child_weight': {'min': 1, 'max': 7},
-            'gamma': {'min': 0, 'max': 0.5}
+            'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
+            'max_depth': {'type': 'int', 'min': 3, 'max': 15},
+            'learning_rate': {'type': 'float', 'min': 0.01, 'max': 0.3},
+            'subsample': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bytree': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bylevel': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'colsample_bynode': {'type': 'float', 'min': 0.6, 'max': 1.0},
+            'reg_alpha': {'type': 'float', 'min': 0.0, 'max': 1.0},
+            'reg_lambda': {'type': 'float', 'min': 0.0, 'max': 1.0},
+            'min_child_weight': {'type': 'int', 'min': 1, 'max': 10},
+            'gamma': {'type': 'float', 'min': 0.0, 'max': 5.0},
+            'max_delta_step': {'type': 'int', 'min': 0, 'max': 10},
+            'scale_pos_weight': {'type': 'float', 'min': 0.5, 'max': 2.0}
         }
         
-        # Initialize swarm
+        # Khởi tạo bầy đàn
         self._initialize_swarm()
         
-        # Optimization results
+        # Kết quả tối ưu hóa
         self.global_best_position = {}
         self.global_best_score = -np.inf
         self.optimization_history = []
         self.avg_scores_history = []
     
     def _prepare_data(self):
-        """Prepare and split data for training."""
-        # Handle missing values
+        """Chuẩn bị và chia dữ liệu cho huấn luyện."""
+        # Xử lý giá trị thiếu
         if np.isnan(self.X).any():
             imputer = SimpleImputer(strategy='median')
             self.X = imputer.fit_transform(self.X)
         
-        # Split data
+        # Chia dữ liệu
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             self.X, self.y, test_size=0.2,
             stratify=self.y
         )
         
-        # Scale features
+        # Chuẩn hóa đặc trưng
         self.scaler = StandardScaler()
         self.X_train_scaled = self.scaler.fit_transform(self.X_train)
         self.X_test_scaled = self.scaler.transform(self.X_test)
     
     def _initialize_swarm(self):
-        """Initialize particle positions and velocities."""
-        # Initialize positions
+        """Khởi tạo vị trí và vận tốc của các hạt."""
+        # Khởi tạo vị trí
         self.positions = []
         for _ in range(self.n_particles):
             position = {}
             for param, range_info in self.param_ranges.items():
-                if param in ['n_estimators', 'max_depth', 'min_child_weight']:
+                if range_info['type'] == 'int':
                     position[param] = np.random.randint(range_info['min'], range_info['max'] + 1)
-                else:
+                elif range_info['type'] == 'float':
                     position[param] = np.random.uniform(range_info['min'], range_info['max'])
+                elif range_info['type'] == 'log_uniform':
+                    log_min = np.log10(range_info['min'])
+                    log_max = np.log10(range_info['max'])
+                    position[param] = 10 ** np.random.uniform(log_min, log_max)
+                elif range_info['type'] == 'choice':
+                    position[param] = np.random.choice(range_info['options'])
+                elif range_info['type'] == 'tuple_choice':
+                    position[param] = np.random.choice(range_info['options'])
             self.positions.append(position)
         
-        # Initialize velocities
+        # Khởi tạo vận tốc
         self.velocities = []
         for _ in range(self.n_particles):
             velocity = {}
@@ -89,12 +103,12 @@ class PSOXGBoostOptimizer:
                 velocity[param] = np.random.uniform(-max_velocity, max_velocity)
             self.velocities.append(velocity)
         
-        # Initialize personal best
+        # Khởi tạo tốt nhất cá nhân
         self.personal_best_positions = self.positions.copy()
         self.personal_best_scores = np.full(self.n_particles, -np.inf)
     
     def _evaluate_fitness(self, position):
-        """Evaluate particle fitness using cross-validation."""
+        """Đánh giá độ phù hợp của hạt bằng cách sử dụng kiểm định chéo."""
         try:
             xgb = XGBClassifier(
                 n_estimators=int(position['n_estimators']),
@@ -119,12 +133,12 @@ class PSOXGBoostOptimizer:
             return -np.inf
     
     def _update_particle(self, particle_idx):
-        """Update particle velocity and position."""
-        # Update velocity
+        """Cập nhật vận tốc và vị trí của hạt."""
+        # Cập nhật vận tốc
         w = self.w - (self.w - self.w_min) * (particle_idx / self.n_particles)
         
         for param, range_info in self.param_ranges.items():
-            # Standard PSO velocity update formula
+            # Công thức cập nhật vận tốc PSO chuẩn
             r1, r2 = np.random.random(2)
             cognitive = self.c1 * r1 * (self.personal_best_positions[particle_idx][param] - 
                                       self.positions[particle_idx][param])
@@ -134,30 +148,30 @@ class PSOXGBoostOptimizer:
             self.velocities[particle_idx][param] = (w * self.velocities[particle_idx][param] + 
                                                   cognitive + social)
             
-            # Update position
+            # Cập nhật vị trí
             self.positions[particle_idx][param] += self.velocities[particle_idx][param]
             
-            # Clamp position to bounds
+            # Giới hạn vị trí trong phạm vi
             self.positions[particle_idx][param] = np.clip(
                 self.positions[particle_idx][param],
                 range_info['min'],
                 range_info['max']
             )
             
-            # Round integer parameters
+            # Làm tròn tham số nguyên
             if param in ['n_estimators', 'max_depth', 'min_child_weight']:
                 self.positions[particle_idx][param] = int(self.positions[particle_idx][param])
     
     def optimize(self):
-        """Execute PSO optimization algorithm."""
-        print("Starting PSO optimization...")
-        print(f"Dataset: {len(self.X)} samples, {self.X.shape[1]} features")
-        print(f"Class distribution: {np.bincount(self.y)}")
+        """Thực thi thuật toán tối ưu hóa PSO."""
+        print("Bắt đầu tối ưu hóa PSO...")
+        print(f"Tập dữ liệu: {len(self.X)} mẫu, {self.X.shape[1]} đặc trưng")
+        print(f"Phân bố lớp: {np.bincount(self.y)}")
         print("-" * 60)
         
         start_time = time.time()
         
-        # Evaluate initial swarm
+        # Đánh giá bầy đàn ban đầu
         for i in range(self.n_particles):
             score = self._evaluate_fitness(self.positions[i])
             self.personal_best_scores[i] = score
@@ -166,36 +180,36 @@ class PSOXGBoostOptimizer:
                 self.global_best_score = score
                 self.global_best_position = self.positions[i].copy()
         
-        # Main optimization loop
+        # Vòng lặp tối ưu hóa chính
         for iteration in range(self.n_iterations):
-            # Update particles
+            # Cập nhật các hạt
             current_scores = []
             for i in range(self.n_particles):
                 self._update_particle(i)
                 
-                # Evaluate new position
+                # Đánh giá vị trí mới
                 score = self._evaluate_fitness(self.positions[i])
                 current_scores.append(score)
                 
-                # Update personal best
+                # Cập nhật tốt nhất cá nhân
                 if score > self.personal_best_scores[i]:
                     self.personal_best_scores[i] = score
                     self.personal_best_positions[i] = self.positions[i].copy()
                     
-                    # Update global best
+                    # Cập nhật tốt nhất toàn cục
                     if score > self.global_best_score:
                         self.global_best_score = score
                         self.global_best_position = self.positions[i].copy()
             
-            # Calculate average score
+            # Tính điểm trung bình
             avg_score = np.mean(current_scores)
             self.avg_scores_history.append(avg_score)
             
-            # Log progress
-            print(f"Iteration {iteration + 1:2d}/{self.n_iterations}: "
-                  f"Best F1={self.global_best_score:.4f}, Avg F1={avg_score:.4f}")
+            # Ghi log tiến trình
+            print(f"Lần lặp {iteration + 1:2d}/{self.n_iterations}: "
+                  f"F1 tốt nhất={self.global_best_score:.4f}, F1 trung bình={avg_score:.4f}")
             
-            # Store history
+            # Lưu lịch sử
             self.optimization_history.append({
                 'iteration': iteration + 1,
                 'best_score': self.global_best_score,
@@ -211,28 +225,28 @@ class PSOXGBoostOptimizer:
         optimization_time = time.time() - start_time
         
         print("-" * 60)
-        print(f"Optimization completed in {optimization_time:.2f} seconds")
-        print(f"Best F1 Score: {self.global_best_score:.4f}")
-        print("Optimal Parameters:")
+        print(f"Tối ưu hóa hoàn thành trong {optimization_time:.2f} giây")
+        print(f"Điểm F1 tốt nhất: {self.global_best_score:.4f}")
+        print("Tham số tối ưu:")
         for param, value in self.global_best_position.items():
             if isinstance(value, float):
                 print(f"  {param}: {value:.6f}")
             else:
                 print(f"  {param}: {value}")
         
-        # Export convergence data to CSV
+        # Xuất dữ liệu hội tụ ra CSV
         convergence_data = pd.DataFrame(self.optimization_history)
         convergence_data.to_csv('pso_xgb_iterations.csv', index=False)
-        print("\nConvergence data exported to 'pso_xgb_iterations.csv'")
+        print("\nDữ liệu hội tụ đã được xuất ra 'pso_xgb_iterations.csv'")
         
         return self.global_best_position, self.global_best_score
     
     def evaluate_test_performance(self):
-        """Train final model and evaluate on test set."""
+        """Huấn luyện mô hình cuối cùng và đánh giá trên tập kiểm tra."""
         if not self.global_best_position:
-            raise ValueError("No optimization results available. Run optimize() first.")
+            raise ValueError("Không có kết quả tối ưu hóa nào. Hãy chạy optimize() trước.")
         
-        # Train final model
+        # Huấn luyện mô hình cuối cùng
         final_model = XGBClassifier(
             n_estimators=int(self.global_best_position['n_estimators']),
             max_depth=int(self.global_best_position['max_depth']),
@@ -248,7 +262,7 @@ class PSOXGBoostOptimizer:
         
         final_model.fit(self.X_train_scaled, self.y_train)
         
-        # Evaluate on test set
+        # Đánh giá trên tập kiểm tra
         y_pred = final_model.predict(self.X_test_scaled)
         y_prob = final_model.predict_proba(self.X_test_scaled)[:, 1]
         
@@ -260,38 +274,38 @@ class PSOXGBoostOptimizer:
             'best_params': self.global_best_position
         }
         
-        print("\nTest Set Performance:")
-        print(f"F1 Score:  {test_metrics['f1_score']:.4f}")
+        print("\nHiệu suất trên Tập Kiểm tra:")
+        print(f"Điểm F1:   {test_metrics['f1_score']:.4f}")
         print(f"ROC AUC:   {test_metrics['roc_auc']:.4f}")
-        print(f"Accuracy:  {test_metrics['accuracy']:.4f}")
+        print(f"Độ chính xác: {test_metrics['accuracy']:.4f}")
         
         return test_metrics
     
     def plot_optimization_progress(self):
-        """Plot optimization progress."""
+        """Vẽ biểu đồ tiến trình tối ưu hóa."""
         plt.figure(figsize=(10, 6))
         iterations = range(1, len(self.optimization_history) + 1)
         best_scores = [h['best_score'] for h in self.optimization_history]
         
-        plt.plot(iterations, best_scores, 'b-', label='Best F1 Score')
-        plt.plot(iterations, self.avg_scores_history, 'r--', label='Average F1 Score')
+        plt.plot(iterations, best_scores, 'b-', label='Điểm F1 Tốt nhất')
+        plt.plot(iterations, self.avg_scores_history, 'r--', label='Điểm F1 Trung bình')
         
-        plt.title('PSO Optimization Progress')
-        plt.xlabel('Iteration')
-        plt.ylabel('F1 Score')
+        plt.title('Tiến trình Tối ưu hóa PSO')
+        plt.xlabel('Lần lặp')
+        plt.ylabel('Điểm F1')
         plt.grid(True)
         plt.legend()
         plt.show()
 
 
 def load_and_preprocess_data(file_path):
-    """Load and preprocess data from CSV file."""
+    """Tải và tiền xử lý dữ liệu từ file CSV."""
     try:
-        # Read CSV with semicolon separator
+        # Đọc CSV với dấu phân cách chấm phẩy
         df = pd.read_csv(file_path, sep=';', na_values='<Null>')
-        print(f"Loaded dataset with {len(df)} rows and {len(df.columns)} columns")
+        print(f"Đã tải tập dữ liệu với {len(df)} hàng và {len(df.columns)} cột")
         
-        # Feature columns for flood prediction
+        # Cột đặc trưng cho dự đoán lũ lụt
         feature_columns = [
             'Aspect', 'Curvature', 'DEM', 'Density_river', 'Density_road',
             'Distance_river', 'Distance_road', 'Flow_direction', 'NDBI',
@@ -299,10 +313,10 @@ def load_and_preprocess_data(file_path):
         ]
         label_column = 'Nom'
         
-        # Convert Yes/No to 1/0
+        # Chuyển đổi Yes/No thành 1/0
         df[label_column] = (df[label_column] == 'Yes').astype(int)
         
-        # Replace comma with dot in numeric columns and convert to float
+        # Thay thế dấu phẩy bằng dấu chấm trong các cột số và chuyển đổi thành float
         for col in feature_columns:
             if df[col].dtype == 'object':
                 df[col] = df[col].str.replace(',', '.').astype(float)
@@ -313,21 +327,21 @@ def load_and_preprocess_data(file_path):
         return X, y, feature_columns
         
     except FileNotFoundError:
-        print(f"ERROR: File not found: {file_path}")
+        print(f"LỖI: Không tìm thấy file: {file_path}")
         return None, None, None
     except Exception as e:
-        print(f"ERROR: {str(e)}")
+        print(f"LỖI: {str(e)}")
         return None, None, None
 
 
 def main():
-    """Main execution function."""
-    # Load data
+    """Hàm thực thi chính."""
+    # Tải dữ liệu
     X, y, feature_names = load_and_preprocess_data("training.csv")
     if X is None:
         return
     
-    # Initialize and run optimizer
+    # Khởi tạo và chạy bộ tối ưu hóa
     optimizer = PSOXGBoostOptimizer(
         X=X, 
         y=y, 
@@ -335,18 +349,18 @@ def main():
         n_iterations=50
     )
     
-    # Optimize hyperparameters
+    # Tối ưu hóa siêu tham số
     best_params, best_score = optimizer.optimize()
     
-    # Plot optimization progress
+    # Vẽ biểu đồ tiến trình tối ưu hóa
     optimizer.plot_optimization_progress()
     
-    # Evaluate final model
+    # Đánh giá mô hình cuối cùng
     test_results = optimizer.evaluate_test_performance()
     
-    # Save best model
+    # Lưu mô hình tốt nhất
     joblib.dump(test_results['model'], 'pso_xgb_model.joblib')
-    print("\nModel saved as: pso_xgb_model.joblib")
+    print("\nMô hình đã được lưu thành: pso_xgb_model.joblib")
 
 
 if __name__ == "__main__":

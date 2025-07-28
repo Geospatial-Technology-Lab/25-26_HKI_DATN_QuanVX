@@ -36,36 +36,24 @@ class MLPRandomizedSearch:
         self.y_train_scaled = self.y_scaler.fit_transform(self.y_train.reshape(-1, 1)).flatten()
         self.y_test_scaled = self.y_scaler.transform(self.y_test.reshape(-1, 1)).flatten()
         
-        # MLP parameter ranges
+        # MLP parameter ranges - Bộ tham số mở rộng
         self.param_ranges = {
-            'hidden_layer_sizes': {
-                'type': 'choice',
-                'choices': [
-                    (50,), (100,), (150,), (200,),
-                    (50, 50), (100, 50), (150, 100), (200, 100),
-                    (100, 100), (150, 150), (200, 150),
-                    (50, 50, 50), (100, 50, 50), (100, 100, 50),
-                    (150, 100, 50), (200, 100, 50)
-                ]
-            },
-            'activation': {
-                'type': 'choice', 
-                'choices': ['relu', 'tanh', 'logistic']
-            },
-            'solver': {
-                'type': 'choice',
-                'choices': ['adam', 'lbfgs', 'sgd']
-            },
-            'alpha': {'type': 'float', 'min': 1e-5, 'max': 1e-1},
-            'learning_rate': {
-                'type': 'choice',
-                'choices': ['constant', 'invscaling', 'adaptive']
-            },
-            'learning_rate_init': {'type': 'float', 'min': 1e-4, 'max': 1e-1},
+            'hidden_layer_sizes': {'type': 'tuple_choice', 'options': [
+                (50,), (100,), (150,), (200,), 
+                (50, 50), (100, 100), (150, 150),
+                (100, 50), (150, 100), (200, 100),
+                (100, 50, 25), (150, 100, 50), (200, 150, 100)
+            ]},
+            'activation': {'type': 'choice', 'options': ['relu', 'tanh', 'logistic']},
+            'solver': {'type': 'choice', 'options': ['adam', 'sgd', 'lbfgs']},
+            'alpha': {'type': 'log_uniform', 'min': 1e-5, 'max': 1e-1},
+            'learning_rate': {'type': 'choice', 'options': ['constant', 'invscaling', 'adaptive']},
+            'learning_rate_init': {'type': 'log_uniform', 'min': 1e-4, 'max': 1e-1},
             'max_iter': {'type': 'int', 'min': 200, 'max': 1000},
-            'beta_1': {'type': 'float', 'min': 0.8, 'max': 0.999},
-            'beta_2': {'type': 'float', 'min': 0.9, 'max': 0.9999},
-            'epsilon': {'type': 'float', 'min': 1e-9, 'max': 1e-6}
+            'beta_1': {'type': 'float', 'min': 0.8, 'max': 0.99},
+            'beta_2': {'type': 'float', 'min': 0.9, 'max': 0.999},
+            'epsilon': {'type': 'log_uniform', 'min': 1e-9, 'max': 1e-6},
+            'tol': {'type': 'log_uniform', 'min': 1e-5, 'max': 1e-2}
         }
     
     def create_random_params(self):
@@ -75,25 +63,24 @@ class MLPRandomizedSearch:
             if range_info['type'] == 'int':
                 params[param] = random.randint(range_info['min'], range_info['max'])
             elif range_info['type'] == 'float':
-                # Sử dụng log scale cho một số tham số
-                if param in ['alpha', 'learning_rate_init', 'epsilon']:
-                    log_min = np.log10(range_info['min'])
-                    log_max = np.log10(range_info['max'])
-                    params[param] = 10 ** random.uniform(log_min, log_max)
-                else:
-                    params[param] = random.uniform(range_info['min'], range_info['max'])
+                params[param] = random.uniform(range_info['min'], range_info['max'])
+            elif range_info['type'] == 'log_uniform':
+                log_min = np.log10(range_info['min'])
+                log_max = np.log10(range_info['max'])
+                params[param] = 10 ** random.uniform(log_min, log_max)
             elif range_info['type'] == 'choice':
-                params[param] = random.choice(range_info['choices'])
+                params[param] = random.choice(range_info['options'])
+            elif range_info['type'] == 'tuple_choice':
+                params[param] = random.choice(range_info['options'])
         
         # Điều chỉnh tham số dựa trên solver
-        if params['solver'] == 'lbfgs':
+        if params.get('solver') == 'lbfgs':
             # lbfgs chỉ hoạt động tốt với dữ liệu nhỏ và ít layers
-            if len(params['hidden_layer_sizes']) > 2:
-                params['hidden_layer_sizes'] = random.choice([
-                    (50,), (100,), (150,), (200,),
-                    (50, 50), (100, 50), (100, 100)
-                ])
-            params['max_iter'] = random.randint(200, 500)  # Giảm max_iter cho lbfgs
+            simple_layers = [(50,), (100,), (150,), (200,), (50, 50), (100, 50), (100, 100)]
+            if 'hidden_layer_sizes' in params and len(params['hidden_layer_sizes']) > 2:
+                params['hidden_layer_sizes'] = random.choice(simple_layers)
+            if 'max_iter' in params:
+                params['max_iter'] = random.randint(200, 500)  # Giảm max_iter cho lbfgs
         
         return params
     

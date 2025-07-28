@@ -5,9 +5,7 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from sklearn.preprocessing import StandardScaler
 import random
-import time
 import warnings
-import seaborn as sns
 import matplotlib.pyplot as plt
 warnings.filterwarnings('ignore')
 
@@ -19,36 +17,40 @@ class PUMAOptimizer:
         self.generations = generations
         self.best_individual = None
         self.best_score = -np.inf
-        self.best_scores_history = []  # Track best scores for plotting
+        self.best_scores_history = []  # Theo dõi điểm số tốt nhất để vẽ biểu đồ
         
-        # Split data
+        # Chia dữ liệu
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             self.X, self.y, test_size=0.2, random_state=42, stratify=self.y
         )
         
-        # Scale data (very important for SVM)
+        # Chuẩn hóa dữ liệu (rất quan trọng cho SVM)
         self.scaler = StandardScaler()
         self.X_train_scaled = self.scaler.fit_transform(self.X_train)
         self.X_test_scaled = self.scaler.transform(self.X_test)
         
-        # SVM parameter ranges
+        # Phạm vi tham số SVM - Bộ tham số mở rộng
         self.param_ranges = {
-            'C': {'type': 'float', 'min': 0.01, 'max': 100.0},
-            'gamma': {'type': 'float', 'min': 0.001, 'max': 10.0},
-            'kernel': {'type': 'categorical', 'values': ['rbf', 'linear', 'poly', 'sigmoid']},
-            'degree': {'type': 'int', 'min': 2, 'max': 5},  # Only for poly kernel
-            'coef0': {'type': 'float', 'min': 0.0, 'max': 10.0},  # For poly and sigmoid
-            'tol': {'type': 'float', 'min': 1e-5, 'max': 1e-2}
+            'C': {'type': 'log_uniform', 'min': 0.001, 'max': 1000},
+            'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 10},
+            'kernel': {'type': 'choice', 'options': ['linear', 'poly', 'rbf', 'sigmoid']},
+            'degree': {'type': 'int', 'min': 2, 'max': 5},
+            'coef0': {'type': 'float', 'min': 0.0, 'max': 10.0},
+            'tol': {'type': 'log_uniform', 'min': 1e-5, 'max': 1e-2},
+            'class_weight': {'type': 'choice', 'options': [None, 'balanced']},
+            'max_iter': {'type': 'int', 'min': 1000, 'max': 10000},
+            'shrinking': {'type': 'choice', 'options': [True, False]},
+            'probability': {'type': 'choice', 'options': [True, False]}
         }
         
-        # Get numerical parameters for consistent vector operations
+        # Lấy tham số số học để thực hiện các phép toán vector nhất quán
         self.numerical_params = [p for p in self.param_ranges if self.param_ranges[p]['type'] in ['float', 'int']]
         self.categorical_params = [p for p in self.param_ranges if self.param_ranges[p]['type'] == 'categorical']
         self.num_numerical = len(self.numerical_params)
         
-        # PUMA-specific parameters
-        self.PF = [0.5, 0.5, 0.3]  # Parameters for F1, F2, F3
-        self.unselected = [1, 1]  # [Exploration, Exploitation]
+        # Tham số đặc trưng PUMA
+        self.PF = [0.5, 0.5, 0.3]  # Tham số cho F1, F2, F3
+        self.unselected = [1, 1]  # [Khám phá, Khai thác]
         self.F3_explore = 0
         self.F3_exploit = 0
         self.seq_time_explore = [1, 1, 1]
@@ -62,26 +64,26 @@ class PUMAOptimizer:
         self.mega_exploit = 0.99
     
     def create_individual(self):
-        """Create a random individual (parameter set) for SVM"""
+        """Tạo một cá thể ngẫu nhiên (bộ tham số) cho SVM"""
         individual = {}
         for param, range_info in self.param_ranges.items():
-            if isinstance(range_info, dict):  # Continuous range
+            if isinstance(range_info, dict):  # Phạm vi liên tục
                 if range_info['type'] == 'int':
                     individual[param] = np.random.randint(range_info['min'], range_info['max'] + 1)
                 elif range_info['type'] == 'float':
                     if param in ['C', 'gamma']:
-                        # Log-scale sampling for C and gamma
+                        # Lấy mẫu theo thang log cho C và gamma
                         log_min = np.log10(range_info['min'])
                         log_max = np.log10(range_info['max'])
                         individual[param] = 10 ** np.random.uniform(log_min, log_max)
                     else:
                         individual[param] = np.random.uniform(range_info['min'], range_info['max'])
-            else:  # Discrete choices (like kernel)
+            else:  # Lựa chọn rời rạc (như kernel)
                 individual[param] = np.random.choice(range_info)
         return individual
     
     def evaluate_individual(self, individual):
-        """Evaluate individual SVM parameters"""
+        """Đánh giá tham số SVM của cá thể"""
         try:
             svm_params = {
                 'C': individual['C'],
@@ -107,27 +109,27 @@ class PUMAOptimizer:
             return float(np.mean(cv_scores))
             
         except Exception as e:
-            print(f"Error evaluating individual: {str(e)}")
+            print(f"Lỗi đánh giá cá thể: {str(e)}")
             return -np.inf
     
     def exploration_phase(self, population):
-        """PUMA Exploration Phase"""
+        """Giai đoạn khám phá PUMA"""
         new_population = []
         new_fitness = []
         
         for i in range(self.population_size):
             current = population[i]
             
-            # Select 6 different solutions randomly
+            # Chọn 6 giải pháp khác nhau một cách ngẫu nhiên
             available_indices = list(range(self.population_size))
             available_indices.remove(i)
             selected_indices = random.sample(available_indices, 6)
             a, b, c, d, e, f = [population[idx] for idx in selected_indices]
             
-            # Create new solution
+            # Tạo giải pháp mới
             new_individual = {}
             for param, range_info in self.param_ranges.items():
-                if isinstance(range_info, dict):  # Continuous parameter
+                if isinstance(range_info, dict):  # Tham số liên tục
                     if random.random() < 0.5:
                         if range_info['type'] == 'int':
                             new_individual[param] = random.randint(range_info['min'], range_info['max'])
@@ -145,10 +147,10 @@ class PUMAOptimizer:
                         else:
                             new_val = np.clip(new_val, range_info['min'], range_info['max'])
                         new_individual[param] = new_val
-                else:  # Categorical parameter (like kernel)
+                else:  # Tham số phân loại (như kernel)
                     new_individual[param] = random.choice(range_info)
             
-            # Evaluate and update
+            # Đánh giá và cập nhật
             new_fitness_val = self.evaluate_individual(new_individual)
             if new_fitness_val > self.evaluate_individual(current):
                 new_population.append(new_individual)
@@ -160,22 +162,22 @@ class PUMAOptimizer:
         return new_population, new_fitness
 
     def exploitation_phase(self, population, best_solution, iteration, max_iter):
-        """PUMA Exploitation Phase"""
-        Q = 0.67  # Exploitation constant
-        Beta = 2  # Beta constant
+        """Giai đoạn khai thác PUMA"""
+        Q = 0.67  # Hằng số khai thác
+        Beta = 2  # Hằng số Beta
         new_population = []
         new_fitness = []
         
-        # Get best solution
+        # Lấy giải pháp tốt nhất
         best_idx = np.argmax([self.evaluate_individual(ind) for ind in population])
         best_solution = population[best_idx]
         
-        # Calculate mean position
+        # Tính vị trí trung bình
         mbest = {}
         for param in self.param_ranges:
             if isinstance(self.param_ranges[param], dict):
                 mbest[param] = np.mean([p[param] for p in population])
-            else:  # categorical parameters
+            else:  # Tham số phân loại
                 values = [p[param] for p in population]
                 mbest[param] = max(set(values), key=values.count)
         
@@ -280,23 +282,23 @@ class PUMAOptimizer:
         population = [self.create_individual() for _ in range(self.population_size)]
         fitness_values = [self.evaluate_individual(ind) for ind in population]
         
-        # Initialize results tracking
+        # Khởi tạo theo dõi kết quả
         iteration_results = []
         
-        # Initial best
+        # Tốt nhất ban đầu
         best_idx = np.argmax(fitness_values)
-        self.best_individual = population[best_idx].copy()
+        self.best_individual = population[best_idx]
         self.best_score = fitness_values[best_idx]
         initial_best_score = self.best_score
         self.best_scores_history.append(self.best_score)
         
-        # Parameters for phase selection
-        unselected = [1, 1]  # [Exploration, Exploitation]
+        # Tham số cho việc chọn phase
+        unselected = [1, 1]  # [Khám phá, Khai thác]
         seq_time_explore = [1, 1, 1]
         seq_time_exploit = [1, 1, 1]
         seq_cost_explore = [0.1, 0.1, 0.1]
         seq_cost_exploit = [0.1, 0.1, 0.1]
-        pf = [0.5, 0.5, 0.3]  # Weights for F1, F2, F3
+        pf = [0.5, 0.5, 0.3]  # Trọng số cho F1, F2, F3
         mega_explor = 0.99
         mega_exploit = 0.99
         f3_explore = 0
@@ -304,7 +306,7 @@ class PUMAOptimizer:
         pf_f3 = [0.01]
         flag_change = 1
         
-        # Unexperienced Phase (first 3 iterations)
+        # Giai đoạn chưa có kinh nghiệm (3 iterations đầu tiên)
         for iteration in range(3):
             print(f"Iteration {iteration + 1}/3")
             
@@ -323,23 +325,23 @@ class PUMAOptimizer:
             population = [population[i] for i in indices]
             fitness_values = [fitness_values[i] for i in indices]
             
-            # Update best
+            # Cập nhật tốt nhất
             if fitness_values[0] > self.best_score:
                 self.best_score = fitness_values[0]
-                self.best_individual = population[0].copy()
-                print(f"New best score: {self.best_score:.4f}")
+                self.best_individual = population[0]
+                print(f"Điểm số tốt nhất mới: {self.best_score:.4f}")
                 self.best_scores_history.append(self.best_score)
         
-        # Initialize sequence costs
+        # Khởi tạo chi phí sequence
         seq_cost_explore[0] = max(0.01, abs(initial_best_score - cost_explore))
         seq_cost_exploit[0] = max(0.01, abs(initial_best_score - cost_exploit))
         
-        # Add non-zero costs to PF_F3
+        # Thêm chi phí khác không vào PF_F3
         for cost in seq_cost_explore + seq_cost_exploit:
             if cost > 0.01:
                 pf_f3.append(cost)
         
-        # Calculate initial scores
+        # Tính điểm số ban đầu
         f1_explore = pf[0] * (seq_cost_explore[0] / seq_time_explore[0])
         f1_exploit = pf[0] * (seq_cost_exploit[0] / seq_time_exploit[0])
         f2_explore = pf[1] * sum(seq_cost_explore) / sum(seq_time_explore)
@@ -349,47 +351,53 @@ class PUMAOptimizer:
         
         # Experienced Phase
         for iteration in range(3, self.generations):
+            # Early stopping: dừng sớm nếu không có cải thiện sau 5 iterations
+            if len(self.best_scores_history) > 5:
+                if all(score == self.best_scores_history[-1] for score in self.best_scores_history[-5:]):
+                    print(f"Early stopping tại iteration {iteration + 1}: Không có cải thiện trong 5 iterations liên tiếp")
+                    break
+                    
             print(f"Iteration {iteration + 1}/{self.generations}")
             
             if score_explore > score_exploit:
-                # Exploration
+                # Khám phá
                 population, fitness_values = self.exploration_phase(population)
-                count_select = unselected.copy()
+                count_select = [unselected[0], unselected[1]]
                 unselected[1] += 1
                 unselected[0] = 1
                 f3_explore = pf[2]
                 f3_exploit += pf[2]
                 
-                # Update sequence costs
+                # Cập nhật chi phí sequence
                 if fitness_values[0] > self.best_score:
                     cost_diff = abs(self.best_score - fitness_values[0])
                     seq_cost_explore = [max(0.01, cost_diff)] + seq_cost_explore[:2]
                     if cost_diff > 0.01:
                         pf_f3.append(cost_diff)
             else:
-                # Exploitation
+                # Khai thác
                 population, fitness_values = self.exploitation_phase(population, self.best_individual, iteration, self.generations)
-                count_select = unselected.copy()
+                count_select = [unselected[0], unselected[1]]
                 unselected[0] += 1
                 unselected[1] = 1
                 f3_explore += pf[2]
                 f3_exploit = pf[2]
                 
-                # Update sequence costs
+                # Cập nhật chi phí sequence
                 if fitness_values[0] > self.best_score:
                     cost_diff = abs(self.best_score - fitness_values[0])
                     seq_cost_exploit = [max(0.01, cost_diff)] + seq_cost_exploit[:2]
                     if cost_diff > 0.01:
                         pf_f3.append(cost_diff)
             
-            # Update best solution
+            # Cập nhật giải pháp tốt nhất
             if fitness_values[0] > self.best_score:
                 self.best_score = fitness_values[0]
-                self.best_individual = population[0].copy()
-                print(f"New best score: {self.best_score:.4f}")
+                self.best_individual = population[0]
+                print(f"Điểm số tốt nhất mới: {self.best_score:.4f}")
                 self.best_scores_history.append(self.best_score)
             
-            # Update time sequences if phase changed
+            # Cập nhật time sequences nếu phase thay đổi
             if flag_change != (1 if score_explore > score_exploit else 2):
                 flag_change = 1 if score_explore > score_exploit else 2
                 seq_time_explore = [count_select[0]] + seq_time_explore[:2]
@@ -415,63 +423,22 @@ class PUMAOptimizer:
             score_explore = (mega_explor * f1_explore) + (mega_explor * f2_explore) + (lmn_explore * min_pf_f3 * f3_explore)
             score_exploit = (mega_exploit * f1_exploit) + (mega_exploit * f2_exploit) + (lmn_exploit * min_pf_f3 * f3_exploit)
         
-        # Save iteration results
+        # Lưu kết quả iteration (đơn giản hóa)
         for iteration in range(self.generations):
             iteration_results.append({
                 'iteration': iteration + 1,
-                'best_score': self.best_score,
-                'best_params': self.best_individual.copy(),
-                'population_mean_score': np.mean(fitness_values),
-                'population_min_score': np.min(fitness_values),
-                'population_max_score': np.max(fitness_values),
-                'phase': 'Unexperienced' if iteration < 3 else 'Exploration' if score_explore > score_exploit else 'Exploitation'
+                'best_score': self.best_score
             })
         
         return self.best_individual, self.best_score, iteration_results
 
-    def local_search(self, base_solution):
-        """Perform local search around a base solution"""
-        child = base_solution.copy()
-        # Randomly select one parameter to modify
-        param = random.choice(list(self.param_ranges.keys()))
-        
-        if isinstance(self.param_ranges[param], dict):  # Continuous parameter
-            current_value = child[param]
-            range_info = self.param_ranges[param]
-            
-            # Define search radius
-            if range_info['type'] == 'int':
-                radius = max(1, int(0.1 * (range_info['max'] - range_info['min'])))
-                min_val = max(range_info['min'], current_value - radius)
-                max_val = min(range_info['max'], current_value + radius)
-                child[param] = random.randint(min_val, max_val)
-            elif range_info['type'] == 'float':
-                if param in ['C', 'gamma']:
-                    # For log-scale parameters, use multiplicative perturbation
-                    factor = random.uniform(0.5, 2.0)
-                    new_value = current_value * factor
-                    child[param] = np.clip(new_value, range_info['min'], range_info['max'])
-                else:
-                    radius = 0.1 * (range_info['max'] - range_info['min'])
-                    min_val = max(range_info['min'], current_value - radius)
-                    max_val = min(range_info['max'], current_value + radius)
-                    child[param] = random.uniform(min_val, max_val)
-        else:  # Categorical parameter
-            values = self.param_ranges[param]['values'].copy()
-            if child[param] in values:
-                values.remove(child[param])
-            if values:
-                child[param] = random.choice(values)
-        
-        return child
-    
     def evaluate_final_model(self):
-        """Evaluate final SVM model on test set"""
+        """Đánh giá mô hình SVM cuối cùng trên tập test"""
         if self.best_individual is None:
-            print("No optimized model available!")
+            print("Không có mô hình được tối ưu!")
             return None
         
-        # Create SVM with best parameters
+        # Tạo SVM với tham số tốt nhất
         svm_params = {
             'C': self.best_individual['C'],
             'kernel': self.best_individual['kernel'],
@@ -481,7 +448,7 @@ class PUMAOptimizer:
             'probability': True
         }
         
-        # Add kernel-specific parameters
+        # Thêm tham số đặc trưng cho kernel
         if self.best_individual['kernel'] == 'rbf':
             svm_params['gamma'] = self.best_individual['gamma']
         elif self.best_individual['kernel'] == 'poly':
@@ -495,31 +462,31 @@ class PUMAOptimizer:
         best_svm = SVC(**svm_params)
         best_svm.fit(self.X_train_scaled, self.y_train)
         
-        # Predict on test set
+        # Dự đoán trên tập test
         y_pred = best_svm.predict(self.X_test_scaled)
         y_prob = best_svm.predict_proba(self.X_test_scaled)
         
-        # Get probabilities for class 1
+        # Lấy xác suất cho lớp 1
         if isinstance(y_prob, np.ndarray) and y_prob.ndim > 1:
             y_prob = y_prob[:, 1]
         
-        # Calculate metrics
+        # Tính các metric
         test_f1 = f1_score(self.y_test, y_pred)
         test_auc = roc_auc_score(self.y_test, y_prob)
         test_acc = accuracy_score(self.y_test, y_pred)
         
-        print("\nTest Set Metrics:")
+        print("\nCác metric trên tập test:")
         print(f"F1-Score: {test_f1:.4f}")
         print(f"AUC-ROC: {test_auc:.4f}")
         print(f"Accuracy: {test_acc:.4f}")
         
-        # Get feature names
+        # Lấy tên feature
         feature_names = getattr(self, 'feature_names', None)
         if feature_names is None:
             feature_names = [f'feature_{i}' for i in range(self.X.shape[1])]
         
-        # For SVM, we can't get feature importances directly like RF
-        # But we can get support vectors information
+        # Với SVM, không thể lấy trực tiếp feature importances như RF
+        # Nhưng có thể lấy thông tin support vectors
         support_vector_info = {
             'n_support_vectors': best_svm.n_support_,
             'support_vectors_indices': best_svm.support_,
@@ -535,121 +502,91 @@ class PUMAOptimizer:
             'support_vector_info': support_vector_info
         }
 
-def plot_optimization_progress(scores_history):
-    plt.figure(figsize=(10, 6))
-    plt.plot(scores_history)
-    plt.title('PUMA Optimization Progress')
-    plt.xlabel('Iteration')
-    plt.ylabel('Best F1 Score')
-    plt.grid(True)
-    plt.show()
-
 def main():
-    """Main function for SVM optimization"""
-    print("Reading data from Excel file...")
+    """Hàm chính cho tối ưu SVM"""
+    print("Đọc dữ liệu từ file Excel...")
     
-    # Change this path to your data file
+    # Thay đổi đường dẫn này thành file dữ liệu của bạn
     file_path = "C:/Users/Admin/Downloads/prj/src/flood_data.xlsx"
     
     try:
         df = pd.read_excel(file_path)
-        print(f"Read {len(df)} rows of data")
+        print(f"Đọc {len(df)} dòng dữ liệu")
         
-        # Feature columns (adjust according to your Excel file)
+        # Cột feature (điều chỉnh theo file Excel của bạn)
         feature_columns = [
             'Rainfall', 'Elevation', 'Slope', 'Aspect', 'Flow_direction',
             'Flow_accumulation', 'TWI', 'Distance_to_river', 'Drainage_capacity',
             'LandCover', 'Imperviousness', 'Surface_temperature'
         ]
         
-        # Label column (adjust according to your Excel file)
-        label_column = 'label_column'  # 1 = flood, 0 = no flood
+        # Cột label (điều chỉnh theo file Excel của bạn)
+        label_column = 'label_column'  # 1 = lũ lụt, 0 = không lũ lụt
         
-        # Check for missing columns
+        # Kiểm tra cột bị thiếu
         missing_cols = [col for col in feature_columns + [label_column] if col not in df.columns]
         if missing_cols:
-            print(f"WARNING: Following columns not found: {missing_cols}")
-            print(f"Available columns: {list(df.columns)}")
+            print(f"CẢNH BÁO: Không tìm thấy các cột sau: {missing_cols}")
+            print(f"Các cột có sẵn: {list(df.columns)}")
             return
         
-        # Prepare data
+        # Chuẩn bị dữ liệu
         X = df[feature_columns].values
         y = df[label_column].values
         
-        # Handle missing values
+        # Xử lý giá trị thiếu
         if np.isnan(X).any():
-            print("WARNING: Missing values found in data!")
+            print("CẢNH BÁO: Tìm thấy giá trị thiếu trong dữ liệu!")
             from sklearn.impute import SimpleImputer
             imputer = SimpleImputer(strategy='median')
             X = imputer.fit_transform(X)
         
-        print(f"Features shape: {X.shape}")
-        print("Label distribution:")
+        print(f"Kích thước features: {X.shape}")
+        print("Phân bố label:")
         y_array = np.asarray(y, dtype=int)
         unique_labels = np.unique(y_array)
         label_counts = np.bincount(y_array)
         for label, count in zip(unique_labels, label_counts):
-            print(f"  Class {label}: {count}")
+            print(f"  Lớp {label}: {count}")
         
-        # Initialize and run PUMA optimizer for SVM
-        print("Starting PUMA optimization...")
+        # Khởi tạo và chạy PUMA optimizer cho SVM
+        print("Bắt đầu tối ưu PUMA...")
         optimizer = PUMAOptimizer(X, y, population_size=15, generations=10)
         best_params, best_score, iteration_results = optimizer.optimize()
         
-        # Plot optimization progress
-        plt.figure(figsize=(10, 6))
-        plt.plot(optimizer.best_scores_history, 'b-', label='Best F1 Score')
-        plt.title('PUMA Optimization Convergence')
-        plt.xlabel('Iteration')
-        plt.ylabel('F1 Score')
-        plt.grid(True)
-        plt.legend()
-        plt.show()
-        
-        print("\nOptimization completed!")
-        print(f"Best F1 score: {best_score:.4f}")
-        print("\nBest parameters:")
+        print("\nTối ưu hoàn thành!")
+        print(f"Điểm F1 tốt nhất: {best_score:.4f}")
+        print("\nTham số tốt nhất:")
         for param, value in best_params.items():
             print(f"  {param}: {value}")
-            
-        # Export convergence data to CSV
-        convergence_data = pd.DataFrame(iteration_results)
-        convergence_data.to_csv('po_svm_convergence.csv', index=False)
-        print("\nConvergence data exported to 'po_svm_convergence.csv'")
         
-        # Train final model with best parameters and get accuracy metrics
-        svm_params = {
-            'C': best_params['C'],
-            'kernel': best_params['kernel'],
-            'gamma': best_params['gamma']
-        }
+        # Huấn luyện mô hình cuối cùng với tham số tốt nhất
+        final_model = SVC(
+            C=best_params['C'],
+            kernel=best_params['kernel'],
+            gamma=best_params.get('gamma', 'scale'),
+            random_state=42
+        )
         
-        final_model = SVC(**svm_params)
-        
-        # Train and evaluate on test set
+        # Huấn luyện và đánh giá trên tập test
         final_model.fit(optimizer.X_train_scaled, optimizer.y_train)
         y_pred = final_model.predict(optimizer.X_test_scaled)
         
-        # Calculate metrics
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+        # Tính các metric đơn giản
+        from sklearn.metrics import accuracy_score, f1_score
         
-        metrics_data = pd.DataFrame({
-            'Metric': ['Accuracy', 'Precision', 'Recall', 'F1_Score'],
-            'Value': [
-                accuracy_score(optimizer.y_test, y_pred),
-                precision_score(optimizer.y_test, y_pred),
-                recall_score(optimizer.y_test, y_pred),
-                f1_score(optimizer.y_test, y_pred)
-            ]
-        })
-        metrics_data.to_csv('po_svm_metrics.csv', index=False)
-        print("Performance metrics exported to 'po_svm_metrics.csv'")
+        accuracy = accuracy_score(optimizer.y_test, y_pred)
+        f1 = f1_score(optimizer.y_test, y_pred)
+        
+        print(f"\nKết quả cuối cùng:")
+        print(f"Accuracy: {accuracy:.4f}")
+        print(f"F1-Score: {f1:.4f}")
             
     except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        print("Please ensure your Excel file exists at the specified path")
+        print(f"Không tìm thấy file: {file_path}")
+        print("Vui lòng đảm bảo file Excel tồn tại tại đường dẫn đã chỉ định")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Lỗi: {e}")
         import traceback
         traceback.print_exc()
 

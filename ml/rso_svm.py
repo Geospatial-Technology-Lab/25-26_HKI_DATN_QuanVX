@@ -15,29 +15,32 @@ class SVMRandomizedSearch:
         self.best_params = None
         self.best_score = -np.inf
         
-        # Split data
+        # Chia dữ liệu
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             self.X, self.y, test_size=0.2, stratify=self.y
         )
         
-        # Scale data (rất quan trọng cho SVM)
+        # Chuẩn hóa dữ liệu (rất quan trọng cho SVM)
         self.scaler = StandardScaler()
         self.X_train_scaled = self.scaler.fit_transform(self.X_train)
         self.X_test_scaled = self.scaler.transform(self.X_test)
         
-        # SVM parameter ranges
+        # Phạm vi tham số SVM - Bộ tham số mở rộng
         self.param_ranges = {
-            'C': {'type': 'log_uniform', 'min': 0.001, 'max': 1000},  # Regularization parameter
-            'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 10},  # Kernel coefficient
+            'C': {'type': 'log_uniform', 'min': 0.001, 'max': 1000},
+            'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 10},
             'kernel': {'type': 'choice', 'options': ['linear', 'poly', 'rbf', 'sigmoid']},
-            'degree': {'type': 'int', 'min': 2, 'max': 5},  # Degree for poly kernel
-            'coef0': {'type': 'float', 'min': 0.0, 'max': 10.0},  # Independent term for poly/sigmoid
+            'degree': {'type': 'int', 'min': 2, 'max': 5},
+            'coef0': {'type': 'float', 'min': 0.0, 'max': 10.0},
+            'tol': {'type': 'log_uniform', 'min': 1e-5, 'max': 1e-2},
             'class_weight': {'type': 'choice', 'options': [None, 'balanced']},
-            'tol': {'type': 'log_uniform', 'min': 1e-5, 'max': 1e-2}  # Tolerance for stopping criterion
+            'max_iter': {'type': 'int', 'min': 1000, 'max': 10000},
+            'shrinking': {'type': 'choice', 'options': [True, False]},
+            'probability': {'type': 'choice', 'options': [True, False]}
         }
     
     def create_random_params(self):
-        """Create random parameter set"""
+        """Tạo bộ tham số ngẫu nhiên"""
         params = {}
         for param, range_info in self.param_ranges.items():
             if range_info['type'] == 'int':
@@ -45,95 +48,102 @@ class SVMRandomizedSearch:
             elif range_info['type'] == 'float':
                 params[param] = random.uniform(range_info['min'], range_info['max'])
             elif range_info['type'] == 'log_uniform':
-                # Log-uniform distribution for parameters like C and gamma
+                # Phân phối log-uniform cho các tham số như C và gamma
                 log_min = np.log10(range_info['min'])
                 log_max = np.log10(range_info['max'])
                 params[param] = 10 ** random.uniform(log_min, log_max)
             elif range_info['type'] == 'choice':
                 params[param] = random.choice(range_info['options'])
         
-        # Adjust parameters based on kernel choice
+        # Điều chỉnh tham số dựa trên lựa chọn kernel
         kernel = params['kernel']
         if kernel == 'linear':
-            # Linear kernel doesn't use gamma, degree, coef0
+            # Kernel tuyến tính không sử dụng gamma, degree, coef0
             params.pop('gamma', None)
             params.pop('degree', None)
             params.pop('coef0', None)
         elif kernel == 'poly':
-            # Polynomial kernel uses all parameters
+            # Kernel đa thức sử dụng tất cả tham số
             pass
         elif kernel == 'rbf':
-            # RBF kernel doesn't use degree, coef0
+            # Kernel RBF không sử dụng degree, coef0
             params.pop('degree', None)
             params.pop('coef0', None)
         elif kernel == 'sigmoid':
-            # Sigmoid kernel doesn't use degree
+            # Kernel sigmoid không sử dụng degree
             params.pop('degree', None)
         
         return params
     
     def evaluate_params(self, params):
-        """Evaluate parameter set using cross-validation"""
+        """Đánh giá bộ tham số bằng cách sử dụng kiểm định chéo"""
         try:
-            # Create SVM model with parameters
-            model_params = params.copy()
+            # Tạo dictionary chỉ chứa các tham số hợp lệ cho SVC
+            model_params = {}
+            valid_params = [
+                'C', 'gamma', 'kernel', 'degree', 'coef0', 'tol',
+                'class_weight', 'max_iter', 'shrinking', 'probability'
+            ]
+            
+            for param in valid_params:
+                if param in params:
+                    model_params[param] = params[param]
+            
+            # Thiết lập giá trị mặc định cho các tham số quan trọng
+            if 'probability' not in model_params:
+                model_params['probability'] = True  # Bật ước lượng xác suất cho tính toán AUC
+            if 'max_iter' not in model_params:
+                model_params['max_iter'] = 10000  # Tăng số lần lặp tối đa để đảm bảo hội tụ
             
             model = SVC(
-                C=model_params.get('C', 1.0),
-                gamma=model_params.get('gamma', 'scale'),
-                kernel=model_params.get('kernel', 'rbf'),
-                degree=model_params.get('degree', 3),
-                coef0=model_params.get('coef0', 0.0),
-                class_weight=model_params.get('class_weight', None),
-                tol=model_params.get('tol', 1e-3),
-                probability=True,  # Enable probability estimates for AUC calculation
-                max_iter=10000  # Increase max iterations to ensure convergence
+                **model_params,
+                random_state=42
             )
             
-            # Cross-validation với timeout protection
+            # Cross-validation với bảo vệ timeout
             cv_scores = cross_val_score(model, self.X_train_scaled, self.y_train, 
                                       cv=3, scoring='f1', n_jobs=1)
             
             return float(np.mean(cv_scores))
             
         except Exception as e:
-            print(f"Error evaluating params: {str(e)}")
+            print(f"Lỗi khi đánh giá tham số: {str(e)}")
             return -np.inf
     
     def search(self):
-        """Main randomized search algorithm"""
-        print("Starting SVM Randomized Search...")
-        print(f"Data: {len(self.X)} points, {self.X.shape[1]} features")
-        print(f"Number of iterations: {self.n_iterations}")
+        """Thuật toán tìm kiếm ngẫu nhiên chính"""
+        print("Bắt đầu Tìm kiếm Ngẫu nhiên SVM...")
+        print(f"Dữ liệu: {len(self.X)} điểm, {self.X.shape[1]} đặc trưng")
+        print(f"Số lần lặp: {self.n_iterations}")
         
-        # Class distribution
+        # Phân bố lớp
         unique_labels = np.unique(self.y)
         label_counts = np.bincount(self.y.astype(int))
-        print("Class distribution:")
+        print("Phân bố lớp:")
         for label, count in zip(unique_labels, label_counts):
-            print(f"  Class {label}: {count}")
+            print(f"  Lớp {label}: {count}")
         print("-" * 50)
         
-        # Random search loop
+        # Vòng lặp tìm kiếm ngẫu nhiên
         for iteration in range(self.n_iterations):
-            print(f"\nIteration {iteration + 1}/{self.n_iterations}")
+            print(f"\nLần lặp {iteration + 1}/{self.n_iterations}")
             
-            # Generate random parameters
+            # Tạo tham số ngẫu nhiên
             params = self.create_random_params()
             
-            # Evaluate parameters
+            # Đánh giá tham số
             score = self.evaluate_params(params)
             
-            # Update best if improved
+            # Cập nhật tốt nhất nếu cải thiện
             if score > self.best_score:
                 self.best_score = score
                 self.best_params = params.copy()
-                print("*** NEW BEST FOUND! ***")
+                print("*** TÌM THẤY TỐT NHẤT MỚI! ***")
             
-            # Print results
-            print(f"Current score: {score:.4f}")
-            print(f"Best score so far: {self.best_score:.4f}")
-            print("Current parameters:")
+            # In kết quả
+            print(f"Điểm hiện tại: {score:.4f}")
+            print(f"Điểm tốt nhất cho đến nay: {self.best_score:.4f}")
+            print("Tham số hiện tại:")
             for param, value in params.items():
                 if isinstance(value, float):
                     print(f"  {param}: {value:.6f}")
@@ -141,10 +151,10 @@ class SVMRandomizedSearch:
                     print(f"  {param}: {value}")
         
         print("\n" + "=" * 50)
-        print("Randomized Search completed!")
+        print("Tìm kiếm Ngẫu nhiên hoàn thành!")
         if self.best_params is not None:
-            print(f"\nBest score: {self.best_score:.4f}")
-            print("Best parameters:")
+            print(f"\nĐiểm tốt nhất: {self.best_score:.4f}")
+            print("Tham số tốt nhất:")
             for param, value in self.best_params.items():
                 if isinstance(value, float):
                     print(f"  {param}: {value:.6f}")
@@ -154,12 +164,12 @@ class SVMRandomizedSearch:
         return self.best_params, self.best_score
     
     def evaluate_final_model(self):
-        """Evaluate final model on test set"""
+        """Đánh giá mô hình cuối cùng trên tập kiểm tra"""
         if self.best_params is None:
-            print("No optimized model available!")
+            print("Không có mô hình tối ưu nào!")
             return None
         
-        # Train model with best parameters
+        # Huấn luyện mô hình với tham số tốt nhất
         best_model = SVC(
             C=self.best_params.get('C', 1.0),
             gamma=self.best_params.get('gamma', 'scale'),
@@ -174,23 +184,23 @@ class SVMRandomizedSearch:
         
         best_model.fit(self.X_train_scaled, self.y_train)
         
-        # Predict on test set
+        # Dự đoán trên tập kiểm tra
         y_pred = best_model.predict(self.X_test_scaled)
         y_prob = best_model.predict_proba(self.X_test_scaled)[:, 1]
         
-        # Calculate metrics
+        # Tính toán các chỉ số
         test_f1 = f1_score(self.y_test, y_pred)
         test_auc = roc_auc_score(self.y_test, y_prob)
         test_acc = accuracy_score(self.y_test, y_pred)
         
-        print("\nTest Set Results:")
+        print("\nKết quả Tập Kiểm tra:")
         print(f"F1-Score: {test_f1:.4f}")
         print(f"AUC-ROC: {test_auc:.4f}")
-        print(f"Accuracy: {test_acc:.4f}")
+        print(f"Độ chính xác: {test_acc:.4f}")
         
-        # Print support vectors info
-        print(f"Number of support vectors: {best_model.n_support_}")
-        print(f"Support vectors per class: {dict(zip(best_model.classes_, best_model.n_support_))}")
+        # In thông tin support vectors
+        print(f"Số lượng support vectors: {best_model.n_support_}")
+        print(f"Support vectors mỗi lớp: {dict(zip(best_model.classes_, best_model.n_support_))}")
         
         return {
             'model': best_model,
@@ -206,81 +216,81 @@ class SVMRandomizedSearch:
         }
 
 def main():
-    """Main function"""
-    print("Reading data from Excel file...")
+    """Hàm chính"""
+    print("Đọc dữ liệu từ file Excel...")
     
-    # Change this path to your data file
+    # Thay đổi đường dẫn này thành file dữ liệu của bạn
     file_path = "C:/Users/Admin/Downloads/prj/src/flood_data.xlsx"
     
     try:
         df = pd.read_excel(file_path)
-        print(f"Read {len(df)} rows of data")
+        print(f"Đã đọc {len(df)} hàng dữ liệu")
         
-        # Feature columns
+        # Cột đặc trưng
         feature_columns = [
             'Rainfall', 'Elevation', 'Slope', 'Aspect', 'Flow_direction',
             'Flow_accumulation', 'TWI', 'Distance_to_river', 'Drainage_capacity',
             'LandCover', 'Imperviousness', 'Surface_temperature'
         ]
         
-        # Label column
-        label_column = 'label_column'  # 1 = flood, 0 = no flood
+        # Cột nhãn
+        label_column = 'label_column'  # 1 = lụt, 0 = không lụt
         
-        # Check for missing columns
+        # Kiểm tra cột thiếu
         missing_cols = [col for col in feature_columns + [label_column] if col not in df.columns]
         if missing_cols:
-            print(f"WARNING: Following columns not found: {missing_cols}")
-            print(f"Available columns: {list(df.columns)}")
+            print(f"CẢNH BÁO: Các cột sau không tìm thấy: {missing_cols}")
+            print(f"Các cột có sẵn: {list(df.columns)}")
             return
         
-        # Prepare data
+        # Chuẩn bị dữ liệu
         X = df[feature_columns].values
         y = df[label_column].values
         
-        # Handle missing values
+        # Xử lý giá trị thiếu
         if np.isnan(X).any():
-            print("WARNING: Missing values found in data!")
+            print("CẢNH BÁO: Tìm thấy giá trị thiếu trong dữ liệu!")
             from sklearn.impute import SimpleImputer
             imputer = SimpleImputer(strategy='median')
             X = imputer.fit_transform(X)
         
-        # Check data size for SVM efficiency
+        # Kiểm tra kích thước dữ liệu cho hiệu quả SVM
         if len(X) > 10000:
-            print(f"WARNING: Large dataset ({len(X)} samples). SVM may be slow.")
-            print("Consider using a subset or switching to linear kernel.")
+            print(f"CẢNH BÁO: Tập dữ liệu lớn ({len(X)} mẫu). SVM có thể chậm.")
+            print("Hãy xem xét sử dụng một tập con hoặc chuyển sang kernel tuyến tính.")
         
-        # Initialize and run randomized search
+        # Khởi tạo và chạy tìm kiếm ngẫu nhiên
         searcher = SVMRandomizedSearch(X, y, n_iterations=30)
         
         start_time = time.time()
         best_params, best_score = searcher.search()
         end_time = time.time()
         
-        print(f"\nSearch time: {end_time - start_time:.2f} seconds")
+        print(f"\nThời gian tìm kiếm: {end_time - start_time:.2f} giây")
         
         if best_params is not None:
-            # Evaluate final model
-            print("\nEvaluating final model on test set:")
+            # Đánh giá mô hình cuối cùng
+            print("\nĐánh giá mô hình cuối cùng trên tập kiểm tra:")
             final_results = searcher.evaluate_final_model()
             
             if final_results:
-                print(f"\nFinal Test Results:")
+                print(f"\nKết quả Kiểm tra Cuối cùng:")
                 print(f"F1-Score: {final_results['test_f1']:.4f}")
                 print(f"AUC: {final_results['test_auc']:.4f}")
-                print(f"Accuracy: {final_results['test_accuracy']:.4f}")
+                print(f"Độ chính xác: {final_results['test_accuracy']:.4f}")
                 
-                # Additional SVM-specific information
-                print(f"\nModel Information:")
-                print(f"Best kernel: {final_results['best_params']['kernel']}")
-                print(f"Total support vectors: {sum(final_results['n_support_vectors'])}")
+                # Thông tin cụ thể về SVM
+                print(f"\nThông tin Mô hình:")
+                print(f"Kernel tốt nhất: {final_results['best_params']['kernel']}")
+                print(f"Tổng support vectors: {sum(final_results['n_support_vectors'])}")
         else:
-            print("\nSearch failed to find valid parameters.")
+            print("\nTìm kiếm thất bại trong việc tìm tham số hợp lệ.")
     
     except FileNotFoundError:
-        print(f"File not found: {file_path}")
-        print("Please ensure your Excel file exists at the specified path")
+        print(f"Không tìm thấy file: {file_path}")
+        print("Vui lòng đảm bảo file Excel của bạn tồn tại tại đường dẫn đã chỉ định")
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"Lỗi: {e}")
 
 if __name__ == "__main__":
     main()
