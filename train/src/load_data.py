@@ -13,8 +13,13 @@ class DataLoader:
     
     def load_data(self, data_path):
         gdf = gpd.read_file(data_path)
+        gdf = gdf[self.feature_names + ['geometry']].dropna()
         coordinates = np.array([[geom.x, geom.y] for geom in gdf.geometry])
         features = gdf[self.feature_names].values
+        # Chuẩn hóa Min-Max: (x - xmin) / (xmax - xmin)
+        features_min = np.min(features, axis=0)
+        features_max = np.max(features, axis=0)
+        features = (features - features_min) / (features_max - features_min)
         return coordinates, features
     
     def load_all_models(self, model_dir):
