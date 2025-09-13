@@ -24,7 +24,6 @@ class FloodPredictor:
         width = int((max_x - min_x) / self.pixel_size) + 1
         height = int((max_y - min_y) / self.pixel_size) + 1
         
-        # CPU grid creation
         grid = np.full((height, width), np.nan, dtype=np.float32)
         for i, (x, y) in enumerate(coordinates):
             col = int((x - min_x) / self.pixel_size)
@@ -40,19 +39,24 @@ class FloodPredictor:
             dst.write(grid, 1)
     
     def run_prediction_pipeline(self, data_file, model_dir, results_dir):
+        print("🔄 Đang tải dữ liệu...")
         coordinates, features = self.load_data(data_file)
+        print(f"✅ Tải dữ liệu thành công! ({len(coordinates)} điểm dữ liệu)")
+        
+        print("🔄 Đang tải các mô hình...")
         models = self.data_loader.load_all_models(model_dir)
+        print(f"✅ Tải {len(models)} mô hình thành công!")
         
         results_path = Path(results_dir)
         results_path.mkdir(exist_ok=True)
         
         # Process multiple models
-        for model_name, model in models.items():
-            print(f"Processing {model_name}...")
+        for i, (model_name, model) in enumerate(models.items(), 1):
+            print(f"\n🔮 [{i}/{len(models)}] Bắt đầu dự đoán với mô hình: {model_name}")
             predictions = self.predict(model, features)
             tiff_path = results_path / f"{model_name}_prediction_map.tif"
             self.create_tif_grid(coordinates, predictions, tiff_path)
-            print(f"Completed {model_name}")
+            print(f"✅ Hoàn thành {model_name} - Lưu tại: {tiff_path.name}")
 
 def main():
     base_dir = Path(__file__).parent.parent
@@ -60,8 +64,10 @@ def main():
     model_dir = base_dir / "model"
     results_dir = base_dir / "results"
     
+    print("🚀 Bắt đầu quá trình dự đoán lũ lụt...")
     predictor = FloodPredictor()
     predictor.run_prediction_pipeline(data_file, model_dir, results_dir)
+    print("\n🎉 Hoàn thành tất cả dự đoán! Kết quả đã được lưu trong thư mục results.")
 
 if __name__ == "__main__":
     main()
