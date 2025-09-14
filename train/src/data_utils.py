@@ -1,11 +1,161 @@
 """Simple, clean data utilities for flood prediction."""
 
+import os
+import warnings
+warnings.filterwarnings('ignore')
+
 import numpy as np
+import pandas as pd
 import geopandas as gpd
 import joblib
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Iterator
+from tqdm import tqdm
 from feature_config import FEATURES, FEATURE_MAPPING
+
+# GPU support detection
+try:
+    import cudf
+    import cupy as cp
+    CUDA_AVAILABLE = True
+    print("✅ GPU support available (cuDF/cuPy)")
+except ImportError:
+    CUDA_AVAILABLE = False
+    print("ℹ️  Using CPU (pandas/numpy)")
+
+
+def process_large_dataset(file_path: Path, output_path: Path = None, 
+                         chunk_size: int = 10_000_000, use_gpu: bool = True) -> None:
+    """Process large dataset with chunking, dropna, and min-max normalization.
+    
+    Args:
+        file_path: Input CSV file path
+        output_path: Output file path (auto-generated if None)
+        chunk_size: Number of rows per chunk (default: 10 million)
+        use_gpu: Use GPU if available
+    """
+    if output_path is None:
+        output_path = file_path.parent / f"{file_path.stem}_processed{file_path.suffix}"
+    
+    use_gpu = use_gpu and CUDA_AVAILABLE
+    
+    print(f"🚀 Processing large dataset...")
+    print(f"📥 Input: {file_path}")
+    print(f"📤 Output: {output_path}")
+    print(f"🔧 GPU enabled: {use_gpu}")
+    print(f"📦 Chunk size: {chunk_size:,} rows")
+    print("-" * 80)
+    
+    processed_chunks = []
+    total_processed_rows = 0
+    
+    try:
+        # Read file in chunks
+        chunk_reader = pd.read_csv(file_path, chunksize=chunk_size)
+        
+        for chunk_idx, chunk in enumerate(tqdm(chunk_reader, desc="Processing chunks", unit="chunk")):
+            print(f"\n📦 Chunk {chunk_idx + 1}:")
+            print(f"  📊 Raw data: {len(chunk):,} rows, {len(chunk.columns)} columns")
+            
+            # Step 1: Remove missing data with dropna
+            initial_rows = len(chunk)
+            cleaned_chunk = chunk.dropna()
+            final_rows = len(cleaned_chunk)
+            dropped_rows = initial_rows - final_rows
+            
+            if dropped_rows > 0:
+                print(f"  🧹 Dropped {dropped_rows:,} rows with missing data ({dropped_rows/initial_rows*100:.1f}%)")
+            
+            if len(cleaned_chunk) == 0:
+                print("  ⚠️  No data left after cleaning, skipping chunk")
+                continue
+            
+            # Step 2: Min-max normalization (x - x_min) / (x_max - x_min)
+            numeric_cols = cleaned_chunk.select_dtypes(include=[np.number]).columns.tolist()
+            
+            if numeric_cols:
+                print(f"  📏 Normalizing {len(numeric_cols)} numeric columns...")
+                
+                if use_gpu:
+                    # GPU processing with cuDF
+                    gpu_df = cudf.from_pandas(cleaned_chunk)
+                    
+                    for col in numeric_cols:
+                        col_data = gpu_df[col]
+                        col_min = col_data.min()
+                        col_max = col_data.max()
+                        
+                        if col_max != col_min:
+                            gpu_df[col] = (col_data - col_min) / (col_max - col_min)
+                        else:
+                            gpu_df[col] = 0.0
+                    
+                    normalized_chunk = gpu_df.to_pandas()
+                else:
+                    # CPU processing with pandas
+                    normalized_chunk = cleaned_chunk.copy()
+                    
+                    for col in numeric_cols:
+                        col_data = normalized_chunk[col]
+                        col_min = col_data.min()
+                        col_max = col_data.max()
+                        
+                        if col_max != col_min:
+                            normalized_chunk[col] = (col_data - col_min) / (col_max - col_min)
+                        else:
+                            normalized_chunk[col] = 0.0
+            else:
+                normalized_chunk = cleaned_chunk
+            
+            print(f"  ✅ Processed: {len(normalized_chunk):,} rows")
+            
+            # Save chunk to avoid memory issues
+            chunk_output = output_path.parent / f"{output_path.stem}_chunk_{chunk_idx + 1}{output_path.suffix}"
+            normalized_chunk.to_csv(chunk_output, index=False)
+            processed_chunks.append(chunk_output)
+            
+            total_processed_rows += len(normalized_chunk)
+            print(f"  💾 Saved chunk to: {chunk_output.name}")
+    
+    except Exception as e:
+        print(f"❌ Error processing file: {e}")
+        raise
+    
+    # Combine all chunks into final file
+    if processed_chunks:
+        print(f"\n🔗 Combining {len(processed_chunks)} chunks...")
+        
+        combined_data = []
+        for chunk_file in tqdm(processed_chunks, desc="Combining chunks"):
+            chunk_data = pd.read_csv(chunk_file)
+            combined_data.append(chunk_data)
+        
+        final_data = pd.concat(combined_data, ignore_index=True)
+        final_data.to_csv(output_path, index=False)
+        
+        # Clean up temporary chunk files
+        for chunk_file in processed_chunks:
+            chunk_file.unlink()
+        
+        print(f"✅ Processing complete!")
+        print(f"📊 Final result: {len(final_data):,} rows, {len(final_data.columns)} columns")
+        print(f"💾 Saved to: {output_path}")
+    else:
+        print("❌ No data to process")
+
+
+def read_csv_chunks(file_path: Path, chunk_size: int = 10_000_000) -> Iterator[pd.DataFrame]:
+    """Read CSV file in chunks with progress tracking."""
+    print(f"📖 Reading file in chunks of {chunk_size:,} rows...")
+    
+    total_size = os.path.getsize(file_path)
+    print(f"📊 File size: {total_size / (1024**3):.2f} GB")
+    
+    chunk_reader = pd.read_csv(file_path, chunksize=chunk_size)
+    
+    for chunk_idx, chunk in enumerate(chunk_reader):
+        print(f"  Processing chunk {chunk_idx + 1}: {len(chunk):,} rows")
+        yield chunk
 
 
 def normalize_features(features: np.ndarray) -> np.ndarray:
