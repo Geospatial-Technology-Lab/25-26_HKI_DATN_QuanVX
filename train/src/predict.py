@@ -61,7 +61,6 @@ class FloodPredictor:
             dst.write(grid, 1)
 
     def run_prediction_pipeline(self, data_file, model_dir, results_dir, layer_name=None):
-        """Unified prediction pipeline - single workflow for all data sizes"""
         
         print("🔄 Đang phân tích dữ liệu lưới điểm...")
         print("📊 Sử dụng luồng xử lý thống nhất cho tất cả kích thước dữ liệu")

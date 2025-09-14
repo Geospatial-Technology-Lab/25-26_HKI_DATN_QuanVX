@@ -4,8 +4,6 @@ from rasterio.transform import from_bounds
 import gc
 import psutil
 from pathlib import Path
-from typing import Tuple
-from data_utils import load_and_process_geodata
 
 class GPUOptimizer:
     
