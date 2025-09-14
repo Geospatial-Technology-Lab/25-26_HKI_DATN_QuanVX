@@ -5,10 +5,9 @@ FEATURES = [
 ]
 
 FEATURE_MAPPING = {
-    # Tên trong GDB -> Tên chuẩn trong mô hình
     'lulc': 'lulc',
-    'denriv': 'Density_River',           # density river
-    'extract_denr1': 'Density_Road',      # density road (alternative name)
+    'Density_River': 'Density_River',
+    'Density_Road': 'Density_Road',
     'Distan2river_met': 'Distan2river_met',
     'Distan2road_met': 'Distan2road_met', 
     'aspect': 'aspect',
