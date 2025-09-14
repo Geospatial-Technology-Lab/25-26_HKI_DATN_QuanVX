@@ -56,7 +56,9 @@ def auto_detect_layer(file_path: Path) -> Optional[str]:
         return None
 
 
-def load_and_process_geodata(file_path: Path, layer_name: Optional[str] = None) -> Tuple[np.ndarray, np.ndarray]:
+def load_and_process_geodata(file_path: Path, layer_name: Optional[str] = None, 
+                            start_idx: Optional[int] = None, end_idx: Optional[int] = None,
+                            count_only: bool = False) -> Tuple[np.ndarray, np.ndarray]:
 
     try:
         # Auto-detect layer if needed
@@ -70,6 +72,14 @@ def load_and_process_geodata(file_path: Path, layer_name: Optional[str] = None) 
             gdf = gpd.read_file(str(file_path), layer=layer_name)
         else:
             gdf = gpd.read_file(str(file_path))
+        
+        # Handle chunking for large datasets
+        if start_idx is not None and end_idx is not None:
+            gdf = gdf.iloc[start_idx:end_idx]
+        
+        if count_only:
+            coordinates = np.array([[geom.x, geom.y] for geom in gdf.geometry])
+            return coordinates, np.array([])
         
         print(f"🔍 Columns trong file: {list(gdf.columns)}")
         

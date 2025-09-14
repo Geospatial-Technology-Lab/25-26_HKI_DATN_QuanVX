@@ -4,6 +4,7 @@ from rasterio.transform import from_bounds
 import gc
 import psutil
 from pathlib import Path
+from tqdm import tqdm
 
 class GPUOptimizer:
     
@@ -17,16 +18,18 @@ class GPUOptimizer:
         
         print(f"🚀 Batch Processing: {n_samples:,} điểm")
         
-        for i in range(0, n_samples, self.batch_size):
-            end_idx = min(i + self.batch_size, n_samples)
-            batch_predictions = model.predict(features[i:end_idx])
-            predictions.extend(batch_predictions)
-            
-            if i % (self.batch_size * 5) == 0:
-                progress = (end_idx / n_samples) * 100
-                memory_gb = psutil.virtual_memory().used / (1024**3)
-                print(f"📊 {progress:.1f}% | RAM: {memory_gb:.1f}GB")
-                gc.collect()
+        with tqdm(total=n_samples, desc="GPU Prediction") as pbar:
+            for i in range(0, n_samples, self.batch_size):
+                end_idx = min(i + self.batch_size, n_samples)
+                batch_predictions = model.predict(features[i:end_idx])
+                predictions.extend(batch_predictions)
+                
+                pbar.update(end_idx - i)
+                
+                if i % (self.batch_size * 5) == 0:
+                    memory_gb = psutil.virtual_memory().used / (1024**3)
+                    pbar.set_postfix({"RAM": f"{memory_gb:.1f}GB"})
+                    gc.collect()
         
         return np.array(predictions)
     

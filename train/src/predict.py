@@ -3,19 +3,45 @@ import rasterio
 from rasterio.transform import from_bounds
 from rasterio.crs import CRS
 from pathlib import Path
+from tqdm import tqdm
+import gc
 
 from data_utils import load_and_process_geodata, load_all_models
 from gpu import GPUOptimizer, optimize_for_big_data
 
 
 class FloodPredictor:
-    """Unified flood prediction pipeline"""
+    """Optimized flood prediction pipeline for big data"""
     
-    def __init__(self, auto_optimize=True):
+    def __init__(self, chunk_size=1_000_000):
         self.pixel_size = 0.00009
         self.crs = CRS.from_epsg(4326)
-        self.auto_optimize = auto_optimize
+        self.chunk_size = chunk_size
+        self.auto_optimize = True
         self.gpu_optimizer = None
+
+    def predict_chunked(self, model, features, model_name):
+        """Make predictions in chunks to avoid memory overflow"""
+        total_samples = len(features)
+        predictions = np.zeros(total_samples, dtype=np.float32)
+        
+        num_chunks = (total_samples // self.chunk_size) + 1
+        
+        with tqdm(total=num_chunks, desc=f"Predicting {model_name}") as pbar:
+            for i in range(num_chunks):
+                start_idx = i * self.chunk_size
+                end_idx = min(start_idx + self.chunk_size, total_samples)
+                
+                chunk_features = features[start_idx:end_idx]
+                predictions[start_idx:end_idx] = model.predict(chunk_features)
+                
+                pbar.update(1)
+                
+                # Memory cleanup
+                if i % 5 == 0:
+                    gc.collect()
+        
+        return predictions
 
     def predict(self, model, features):
         """Make predictions using the model"""
@@ -34,13 +60,20 @@ class FloodPredictor:
         # Khởi tạo grid với giá trị NaN
         grid = np.full((height, width), np.nan, dtype=np.float32)
         
-        # Điền giá trị vào grid
-        for i, (x, y) in enumerate(coordinates):
-            col = int((x - min_x) / self.pixel_size)
-            row = int((max_y - y) / self.pixel_size)
-            
-            if 0 <= row < height and 0 <= col < width:
-                grid[row, col] = predictions[i]
+        # Điền giá trị vào grid với thanh tiến trình
+        with tqdm(total=len(coordinates), desc="Creating grid") as pbar:
+            for i in range(0, len(coordinates), 10000):  # Process in batches
+                batch_end = min(i + 10000, len(coordinates))
+                
+                for j in range(i, batch_end):
+                    x, y = coordinates[j]
+                    col = int((x - min_x) / self.pixel_size)
+                    row = int((max_y - y) / self.pixel_size)
+                    
+                    if 0 <= row < height and 0 <= col < width:
+                        grid[row, col] = predictions[j]
+                
+                pbar.update(batch_end - i)
         
         # Tạo transform cho GeoTIFF
         transform = from_bounds(min_x, min_y, max_x, max_y, width, height)
@@ -56,13 +89,18 @@ class FloodPredictor:
             crs=self.crs,
             transform=transform,
             nodata=np.nan,
-            compress='lzw'
+            compress='lzw',
+            tiled=True,
+            blockxsize=512,
+            blockysize=512
         ) as dst:
             dst.write(grid, 1)
 
     def run_prediction_pipeline(self, data_file, model_dir, results_dir, layer_name=None):
+        """Optimized pipeline for big data processing"""
         
-        print("🔄 Đang phân tích dữ liệu lưới điểm...")
+        print("� Starting Big Data Flood Prediction Pipeline")
+        print(f"⚙️ Chunk size: {self.chunk_size:,} points")
         print("📊 Sử dụng luồng xử lý thống nhất cho tất cả kích thước dữ liệu")
         if layer_name:
             print(f"🎯 Sử dụng layer: {layer_name}")
@@ -93,27 +131,27 @@ class FloodPredictor:
         results_path = Path(results_dir)
         results_path.mkdir(exist_ok=True)
         
-        # Xử lý từng mô hình
-        for i, (model_name, model) in enumerate(models.items(), 1):
-            print(f"\n🔮 [{i}/{len(models)}] Bắt đầu dự đoán với mô hình: {model_name}")
-            tiff_path = results_path / f"{model_name}_prediction_map.tif"
+        # Xử lý từng mô hình với thanh tiến trình
+        print(f"\n🔮 Processing {len(models)} models...")
+        
+        for model_name, model in tqdm(models.items(), desc="Models"):
+            print(f"\n� Processing: {model_name}")
             
-            if self.gpu_optimizer:
-                # Sử dụng GPU optimization cho big data
-                success = self.gpu_optimizer.process_model_parallel(
-                    model, features, coordinates, model_name, tiff_path, 
-                    self.pixel_size, self.crs
-                )
-                if not success:
-                    print(f"⚠️ GPU optimization thất bại, fallback về CPU...")
-                    predictions = self.predict(model, features)
-                    self.create_tif_grid(coordinates, predictions, tiff_path)
+            # Use chunked prediction for large datasets
+            if len(coordinates) > 1_000_000:  # 1M+ points
+                predictions = self.predict_chunked(model, features, model_name)
             else:
-                # Sử dụng CPU processing cho dữ liệu nhỏ
                 predictions = self.predict(model, features)
-                self.create_tif_grid(coordinates, predictions, tiff_path)
             
-            print(f"✅ Hoàn thành {model_name} - Lưu tại: {tiff_path.name}")
+            # Create TIF
+            tiff_path = results_path / f"{model_name}_prediction.tif"
+            self.create_tif_grid(coordinates, predictions, tiff_path)
+            
+            print(f"✅ Saved: {tiff_path.name}")
+            
+            # Memory cleanup
+            del predictions
+            gc.collect()
 
 
 def main():
@@ -133,7 +171,8 @@ def main():
     print(f"📁 File GDB: {data_file}")
     print(f"🎯 Sử dụng layer: {layer_name}")
     print(f"📋 Input: 13 features (không có target 'flood')")
-    predictor = FloodPredictor()
+    
+    predictor = FloodPredictor(chunk_size=1_000_000)  # 1M chunk size
     predictor.run_prediction_pipeline(data_file, model_dir, results_dir, layer_name)
     print("\n🎉 Hoàn thành tất cả dự đoán! Kết quả đã được lưu trong thư mục results.")
 
