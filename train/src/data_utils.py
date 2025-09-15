@@ -10,17 +10,15 @@ from rasterio.crs import CRS
 from pathlib import Path
 from typing import Tuple
 from tqdm import tqdm
-from feature_config import FEATURES, FEATURE_MAPPING, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS
+from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
 
 
 def normalize_with_config(features: np.ndarray) -> np.ndarray:
-    """Normalize features using config min/max values."""
     if len(features) == 0:
         return features
-    
-    feature_order = [FEATURE_MAPPING[col] for col in FEATURES if col in FEATURE_MAPPING]
-    mins = np.array([FEATURE_MIN_MAX[f][0] for f in feature_order])
-    maxs = np.array([FEATURE_MIN_MAX[f][1] for f in feature_order])
+     
+    mins = np.array([FEATURE_MIN_MAX[f][0] for f in FEATURES])
+    maxs = np.array([FEATURE_MIN_MAX[f][1] for f in FEATURES])
     ranges = maxs - mins
     ranges[ranges == 0] = 1
     return (features - mins) / ranges
@@ -30,8 +28,8 @@ def map_features(columns: list) -> dict:
     """Map columns to standard features."""
     mapped = {}
     for col in columns:
-        if col in FEATURE_MAPPING and FEATURE_MAPPING[col] in FEATURES:
-            mapped[FEATURE_MAPPING[col]] = col
+        if col in FEATURES:
+            mapped[col] = col
     return mapped
 
 
@@ -81,15 +79,6 @@ def load_models(model_dir: Path) -> dict:
     return models
 
 
-def get_row_count(file_path: Path, layer_name: str = None) -> int:
-    """Get total rows."""
-    try:
-        gdf = gpd.read_file(str(file_path), layer=layer_name)
-        return len(gdf)
-    except Exception:
-        return 100000  # Estimate
-
-
 def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: Path, 
                    chunk_size: int = 50000, pixel_size: float = 0.00009) -> None:
     """Create TIFF predictions using config bounds - MAIN WORKFLOW."""
@@ -104,9 +93,9 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
     transform = from_bounds(x_min, y_min, x_max, y_max, width, height)
     
     print(f"📊 Raster: {width}x{height} = {width*height:,} pixels")
+    print(f"📊 Using configured row count: {TOTAL_ROWS:,}")
     
-    total_rows = get_row_count(file_path, layer_name)
-    estimated_chunks = (total_rows // chunk_size) + 1
+    estimated_chunks = (TOTAL_ROWS // chunk_size) + 1
     
     # Process each model
     for model_name, model in models.items():

@@ -1,11 +1,8 @@
-"""Simple flood prediction using data_utils workflow."""
-
 from pathlib import Path
 from data_utils import load_models, predict_to_tiff
 
 
 def main():
-    """Run flood prediction using clean workflow."""
     print("🚀 Flood Prediction with Config-based Workflow")
     
     # Load models

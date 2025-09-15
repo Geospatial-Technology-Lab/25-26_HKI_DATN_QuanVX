@@ -4,22 +4,6 @@ FEATURES = [
     'slope', 'twi', 'NDVI', 'rainfall'
 ]
 
-FEATURE_MAPPING = {
-    'lulc': 'lulc',
-    'Density_River': 'Density_River',
-    'Density_Road': 'Density_Road',
-    'Distan2river_met': 'Distan2river_met',
-    'Distan2road_met': 'Distan2road_met', 
-    'aspect': 'aspect',
-    'curvature': 'curvature',
-    'dem': 'dem',
-    'flowDir': 'flowDir',
-    'slope': 'slope', 
-    'twi': 'twi',
-    'NDVI': 'NDVI',
-    'rainfall': 'rainfall',
-}
-
 # Min/Max values for normalization (configure these based on your data)
 FEATURE_MIN_MAX = {
     'lulc': (0.0, 10.0),
@@ -37,13 +21,11 @@ FEATURE_MIN_MAX = {
     'rainfall': (0.0, 4000.0)
 }
 
-# Study area bounds (configure based on your study area)
 # Format: (lon_min, lat_min, lon_max, lat_max)
-STUDY_AREA_BOUNDS = (105.0, 20.0, 106.0, 21.0)  # Example for Vietnam region
+STUDY_AREA_BOUNDS = (105.0, 20.0, 106.0, 21.0)
 
-# Validation: Ensure all mapping values are in features list
-assert all(value in FEATURES for value in FEATURE_MAPPING.values()), \
-    "Some mapped features are not in the standard features list"
+# Total number of data rows (configure this to avoid loading entire file for counting)
+TOTAL_ROWS = 224_000_000  # 223 million rows
 
 # Validation: Ensure all features have min/max values
 assert all(feature in FEATURE_MIN_MAX for feature in FEATURES), \
