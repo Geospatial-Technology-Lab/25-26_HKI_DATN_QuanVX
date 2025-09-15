@@ -22,12 +22,12 @@ except ImportError:
     DEVICE = 'cpu'
 
 
-def normalize_with_config(features: np.ndarray) -> np.ndarray:
+def normalize_with_config(features: np.ndarray, feature_names: list) -> np.ndarray:
     if len(features) == 0:
         return features
      
-    mins = np.array([FEATURE_MIN_MAX[f][0] for f in FEATURES])
-    maxs = np.array([FEATURE_MIN_MAX[f][1] for f in FEATURES])
+    mins = np.array([FEATURE_MIN_MAX[f][0] for f in feature_names])
+    maxs = np.array([FEATURE_MIN_MAX[f][1] for f in feature_names])
     ranges = maxs - mins
     ranges[ranges == 0] = 1
     return (features - mins) / ranges
@@ -62,7 +62,7 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
             return np.array([]), np.array([])
         
         coords = np.array([[g.x, g.y] for g in gdf.geometry.iloc[:len(chunk_clean)]])
-        features = normalize_with_config(chunk_clean.values)
+        features = normalize_with_config(chunk_clean.values, list(features_map.keys()))
         
         del gdf, chunk_clean
         gc.collect()
@@ -140,7 +140,7 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
             
             # Predict
             try:
-                preds = np.clip(predict_gpu_batch(model, features), 0.0, 1.0)
+                preds = np.clip(predict_gpu_batch(model, features), 0.00, 1.00)
             except:
                 continue
             

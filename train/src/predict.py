@@ -14,7 +14,7 @@ def main():
         return
     
     # Run prediction to TIFF
-    data_file = Path(r"D:\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")
+    data_file = Path(r"D:\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")  # Update this path for your system
     output_dir = Path(__file__).parent.parent / "results"
     layer_name = "RasterT_Extract1"
     
