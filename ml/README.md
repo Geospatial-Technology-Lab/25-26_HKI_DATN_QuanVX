@@ -10,40 +10,80 @@ Dự án này cung cấp một framework tối ưu hóa tham số cho các mô h
 - ✅ **Tổ chức lại config**: Tách biệt config general và model-specific parameters
 - ✅ **Cải thiện stability**: Thêm early stopping và validation parameters cho MLP
 
-## Cấu trúc dự án
+## Cấu trúc dự án ✨ **REORGANIZED**
 
-### 📁 Files chính
+### 📁 **Cấu trúc thư mục mới (v2.0)**
 
-#### 🔧 **Core Optimizers (Thuật toán tối ưu hóa)**
-- `pso_optimizer.py` - Particle Swarm Optimization (PSO)
-- `rso_optimizer.py` - Random Search Optimization (RSO) 
-- `puma_optimizer.py` - PUMA Optimization Algorithm ✨ *Updated*
+```
+ml/
+├── 📁 config/                     # Cấu hình YAML
+│   ├── data_config.yaml           # Cấu hình dữ liệu
+│   ├── model_config.yaml          # Cấu hình model parameters
+│   ├── optimization_config.yaml   # Cấu hình algorithms
+│   └── model_params.py            # Legacy parameters (backward compatibility)
+│
+├── 📁 data/                       # Data processing
+│   ├── __init__.py
+│   └── data_preprocessing.py      # Data loading & preprocessing
+│
+├── 📁 models/                     # Model definitions
+│   └── __init__.py                # (Chuẩn bị cho model classes)
+│
+├── 📁 optimization/               # Optimization algorithms
+│   ├── __init__.py
+│   ├── pso_optimizer.py           # PSO algorithm
+│   ├── rso_optimizer.py           # RSO algorithm  
+│   └── puma_optimizer.py          # PUMA algorithm
+│
+├── 📁 evaluation/                 # Evaluation & metrics
+│   ├── __init__.py
+│   └── evaluation_utils.py        # Metrics calculation
+│
+├── 📁 utils/                      # Utilities
+│   ├── __init__.py
+│   ├── config.py                  # Legacy config (backward compatibility)
+│   ├── yaml_config.py             # YAML config management ✨ *New*
+│   └── logging.py                 # Logging utilities ✨ *New*
+│
+├── 📁 experiments/               # Experiment runners
+│   ├── __init__.py
+│   ├── pso_rf.py                 # PSO + Random Forest
+│   ├── pso_svm.py                # PSO + SVM
+│   ├── pso_xgb.py                # PSO + XGBoost
+│   ├── pso_mlp.py                # PSO + MLP
+│   ├── rso_rf.py                 # RSO + Random Forest
+│   ├── rso_svm.py                # RSO + SVM
+│   ├── rso_xgb.py                # RSO + XGBoost
+│   ├── rso_mlp.py                # RSO + MLP
+│   ├── po_rf.py                  # PUMA + Random Forest
+│   ├── po_svm.py                 # PUMA + SVM
+│   ├── po_xgb.py                 # PUMA + XGBoost
+│   └── po_mlp.py                 # PUMA + MLP
+│
+├── 📁 scripts/                   # Entry point scripts
+│   └── run_optimization.py       # Main runner script ✨ *New*
+│
+├── __init__.py                   # Package initialization ✨ *New*
+├── requirements.txt              # Dependencies ✨ *New*
+└── README.md                     # Documentation
+```
 
-#### 🤖 **Model Optimizers (Tối ưu hóa mô hình)**
+### 🆕 **Cải tiến chính (v2.0)**
 
-##### PSO-based:
-- `pso_rf.py` - PSO cho Random Forest
-- `pso_svm.py` - PSO cho Support Vector Machine
-- `pso_xgb.py` - PSO cho XGBoost
-- `pso_mlp.py` - PSO cho Multi-Layer Perceptron
+#### ✅ **Modular Architecture**
+- **Separation of Concerns**: Tách biệt data, models, optimization, evaluation
+- **Clear Dependencies**: Mỗi module có trách nhiệm rõ ràng
+- **Easy Testing**: Structure cho phép unit testing dễ dàng
 
-##### RSO-based:
-- `rso_rf.py` - Random Search cho Random Forest
-- `rso_svm.py` - Random Search cho Support Vector Machine
-- `rso_xgb.py` - Random Search cho XGBoost
-- `rso_mlp.py` - Random Search cho Multi-Layer Perceptron
+#### ✅ **YAML Configuration Management**
+- **Centralized Config**: Tất cả config tập trung trong `config/`
+- **Environment Flexible**: Dễ dàng switch giữa các environment
+- **Backward Compatible**: Vẫn support config cũ
 
-##### PUMA-based:
-- `po_rf.py` - PUMA cho Random Forest
-- `po_svm.py` - PUMA cho Support Vector Machine
-- `po_xgb.py` - PUMA cho XGBoost
-- `po_mlp.py` - PUMA cho Multi-Layer Perceptron ✨ *Enhanced with custom metrics*
-
-#### 🛠️ **Utility Modules (Module tiện ích)**
-- `config.py` - Cấu hình chung ✨ *Reorganized*
-- `model_params.py` - Định nghĩa tham số cho các mô hình ✨ *Enhanced*
-- `evaluation_utils.py` - Hàm đánh giá và tính fitness
-- `data_preprocessing.py` - Xử lý và chuẩn bị dữ liệu
+#### ✅ **Enhanced Developer Experience**
+- **Entry Point Scripts**: `scripts/run_optimization.py` làm entry point chính
+- **Proper Logging**: Structured logging với levels
+- **Package Structure**: Proper Python package với `__init__.py`
 
 ## Chi tiết thuật toán
 
@@ -159,44 +199,67 @@ fitness = R² - RMSE - MAE
 
 **Mục tiêu**: Maximization (tối đa hóa fitness)
 
-## Cách sử dụng
+## Cách sử dụng ✨ **ENHANCED**
 
 ### 1. Cài đặt dependencies
 ```bash
-pip install numpy pandas scikit-learn xgboost
+# Cài đặt từ requirements.txt
+pip install -r requirements.txt
+
+# Hoặc cài đặt manual
+pip install numpy pandas scikit-learn xgboost PyYAML
 ```
 
-### 2. Chạy tối ưu hóa
+### 2. **Cách sử dụng mới (v2.0)** ✨
 
-#### PSO cho Random Forest:
+#### Sử dụng script runner chính:
 ```bash
+# PSO cho Random Forest  
+python scripts/run_optimization.py --model rf --optimizer pso
+
+# RSO cho SVM
+python scripts/run_optimization.py --model svm --optimizer rso
+
+# PUMA cho XGBoost
+python scripts/run_optimization.py --model xgb --optimizer puma
+
+# MLP với verbose output
+python scripts/run_optimization.py --model mlp --optimizer pso --verbose
+```
+
+#### Import như Python package:
+```python
+# Import framework
+from ml.optimization import PSOOptimizer, PUMAOptimizer
+from ml.utils.yaml_config import load_model_config, get_optimization_params
+from ml.data import load_flood_data
+
+# Load data
+X_train, X_test, y_train, y_test = load_flood_data()
+
+# Load config
+pso_config = get_optimization_params('pso')
+model_config = get_model_config('rf')
+
+# Run optimization
+optimizer = PSOOptimizer(X_train, y_train, **pso_config)
+best_params, best_score = optimizer.optimize()
+```
+
+### 3. **Cách sử dụng cũ (Backward Compatible)**
+
+#### Chạy trực tiếp từ experiments/:
+```bash
+cd experiments/
+
+# PSO cho Random Forest
 python pso_rf.py
-```
 
-#### RSO cho SVM:
-```bash
+# RSO cho SVM  
 python rso_svm.py
-```
 
-#### PUMA cho MLP ✨ *Enhanced*:
-```bash
+# PUMA cho MLP
 python po_mlp.py
-```
-
-**Output mới**:
-```
-Tiến trình tối ưu hóa PUMA cho regression:
-Gen | Fitness     | R²        | MAE       | RMSE
--------------------------------------------------------
-  1 |   0.827445 | 0.792969 |   0.1811 |   0.2245
-  2 |   0.843924 | 0.808521 |   0.1756 |   0.2156
-  3 |   0.851203 | 0.815647 |   0.1723 |   0.2098
-```
-*Lưu ý: Metrics hiện tại đã đồng bộ chính xác với fitness score*
-
-### 3. Chạy demo (nếu có):
-```bash
-python pso_mlp.py demo
 ```
 
 ## Cấu hình dữ liệu

@@ -1,0 +1,40 @@
+# Cấu hình thuật toán tối ưu hóa
+
+# PSO (Particle Swarm Optimization)
+pso:
+  population_size: 10
+  n_iterations: 100
+  inertia_weight: 0.5
+  cognitive_coeff: 2.0
+  social_coeff: 2.0
+  min_inertia: 0.4
+  max_inertia: 0.9
+  
+# RSO (Random Search Optimization)  
+rso:
+  n_iterations: 100
+  random_seed: 42
+  
+# PUMA Optimization
+puma:
+  population_size: 10
+  generations: 100
+  crossover_rate: 0.5
+  mutation_rate: 0.1
+  
+# Chung cho tất cả algorithms
+general:
+  random_seed: 42
+  verbose: true
+  save_results: true
+  n_jobs: 1  # Số cores sử dụng
+  
+# Evaluation settings
+evaluation:
+  cv_folds: 5
+  scoring_metric: "r2"
+  metrics_to_track:
+    - "r2"
+    - "mae" 
+    - "rmse"
+    - "mse"

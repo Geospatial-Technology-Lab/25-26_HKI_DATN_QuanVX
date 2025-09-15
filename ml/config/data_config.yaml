@@ -1,0 +1,40 @@
+# Cấu hình dữ liệu
+data:
+  flood_csv_path: "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/merged_flood_point_merge_cleaned_balanced_reordered_nonlatlon_normalized_delindexNB.csv"
+  
+  # Cấu hình preprocessing
+  preprocessing:
+    separator: ","
+    na_values: "<Null>"
+    test_size: 0.2
+    random_state: 42
+    imputation_strategy: "median"
+    
+  # Columns configuration
+  features:
+    - "lulc"
+    - "Density_River" 
+    - "Density_Road"
+    - "Distan2river_met"
+    - "Distan2road_met"
+    - "aspect"
+    - "curvature"
+    - "dem"
+    - "flowDir"
+    - "slope"
+    - "twi"
+    - "NDVI"
+    - "rainfall"
+    
+  target:
+    column: "flood"
+    mapping:
+      1: 1.0
+      0: 0.0
+
+# Output directories
+output:
+  base_dir: "./outputs"
+  models_dir: "./outputs/models"
+  results_dir: "./outputs/results"
+  plots_dir: "./outputs/plots"

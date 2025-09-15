@@ -25,7 +25,7 @@ FEATURE_MIN_MAX = {
 STUDY_AREA_BOUNDS = (105.0, 20.0, 106.0, 21.0)
 
 # Total number of data rows (configure this to avoid loading entire file for counting)
-TOTAL_ROWS = 224_000_000  # 223 million rows
+TOTAL_ROWS = 224_000_000  # 224 million rows
 
 # Validation: Ensure all features have min/max values
 assert all(feature in FEATURE_MIN_MAX for feature in FEATURES), \

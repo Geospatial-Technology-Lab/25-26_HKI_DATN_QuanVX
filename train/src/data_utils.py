@@ -12,6 +12,15 @@ from typing import Tuple
 from tqdm import tqdm
 from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
 
+# GPU support
+try:
+    import torch
+    GPU_AVAILABLE = torch.cuda.is_available()
+    DEVICE = torch.device('cuda' if GPU_AVAILABLE else 'cpu')
+except ImportError:
+    GPU_AVAILABLE = False
+    DEVICE = 'cpu'
+
 
 def normalize_with_config(features: np.ndarray) -> np.ndarray:
     if len(features) == 0:
@@ -65,6 +74,24 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
         return np.array([]), np.array([])
 
 
+def predict_gpu_batch(model, features, batch_size=8000):
+    """GPU prediction với batch để tránh OOM."""
+    if len(features) == 0:
+        return np.array([])
+    
+    predictions = []
+    for i in range(0, len(features), batch_size):
+        batch = features[i:i+batch_size]
+        pred = model.predict(batch)
+        predictions.append(pred)
+        
+        # GPU cleanup mỗi batch
+        if GPU_AVAILABLE and i % (batch_size * 5) == 0:
+            torch.cuda.empty_cache()
+    
+    return np.concatenate(predictions) if predictions else np.array([])
+
+
 def load_models(model_dir: Path) -> dict:
     """Load all models."""
     models = {}
@@ -81,9 +108,9 @@ def load_models(model_dir: Path) -> dict:
 
 def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: Path, 
                    chunk_size: int = 50000, pixel_size: float = 0.00009) -> None:
-    """Create TIFF predictions using config bounds - MAIN WORKFLOW."""
     
     print(f"🚀 Creating TIFF predictions")
+    print(f"🔧 Using device: {DEVICE}")
     output_dir.mkdir(exist_ok=True)
     
     # Calculate raster from config
@@ -113,7 +140,7 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
             
             # Predict
             try:
-                preds = np.clip(model.predict(features), 0.0, 1.0)
+                preds = np.clip(predict_gpu_batch(model, features), 0.0, 1.0)
             except:
                 continue
             
@@ -128,6 +155,8 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
             del coords, features, preds
             if chunk_idx % 20 == 0:
                 gc.collect()
+                if GPU_AVAILABLE:
+                    torch.cuda.empty_cache()
         
         # Save TIFF
         output_path = output_dir / f"{model_name}_flood_probability.tif"

@@ -1,0 +1,132 @@
+# Cấu hình tham số cho các mô hình Machine Learning
+
+# Random Forest parameters
+random_forest:
+  param_ranges:
+    n_estimators:
+      type: "int"
+      min: 50
+      max: 1000
+    max_depth:
+      type: "int" 
+      min: 3
+      max: 50
+    min_samples_split:
+      type: "int"
+      min: 2
+      max: 20
+    min_samples_leaf:
+      type: "int"
+      min: 1
+      max: 20
+    max_features:
+      type: "choice"
+      options: ["sqrt", "log2", null, 0.3, 0.5, 0.7, 0.9]
+    bootstrap:
+      type: "choice"
+      options: [true, false]
+      
+  default_params:
+    n_jobs: -1
+    random_state: 42
+
+# XGBoost parameters
+xgboost:
+  param_ranges:
+    n_estimators:
+      type: "int"
+      min: 50
+      max: 1000
+    max_depth:
+      type: "int"
+      min: 3
+      max: 15
+    learning_rate:
+      type: "float"
+      min: 0.01
+      max: 0.3
+    subsample:
+      type: "float"
+      min: 0.6
+      max: 1.0
+    colsample_bytree:
+      type: "float"
+      min: 0.6
+      max: 1.0
+    reg_alpha:
+      type: "float"
+      min: 0.0
+      max: 1.0
+    reg_lambda:
+      type: "float"
+      min: 0.0
+      max: 1.0
+      
+  default_params:
+    random_state: 42
+    n_jobs: -1
+
+# SVM parameters
+svm:
+  param_ranges:
+    C:
+      type: "log_uniform"
+      min: 0.001
+      max: 1000
+    gamma:
+      type: "log_uniform"
+      min: 0.0001
+      max: 10
+    kernel:
+      type: "choice"
+      options: ["linear", "poly", "rbf", "sigmoid"]
+    degree:
+      type: "int"
+      min: 2
+      max: 5
+    epsilon:
+      type: "float"
+      min: 0.01
+      max: 1.0
+      
+  default_params:
+    max_iter: 10000
+
+# MLP parameters
+mlp:
+  param_ranges:
+    hidden_layer_sizes:
+      type: "choice"
+      options:
+        - [50]
+        - [100]
+        - [150]
+        - [200]
+        - [50, 50]
+        - [100, 100]
+        - [150, 150]
+        - [100, 50]
+        - [150, 100]
+        - [200, 100]
+        - [100, 50, 25]
+        - [150, 100, 50]
+        - [200, 150, 100]
+    activation:
+      type: "choice"
+      options: ["relu", "tanh", "logistic"]
+    solver:
+      type: "choice"
+      options: ["adam", "sgd", "lbfgs"]
+    alpha:
+      type: "log_uniform"
+      min: 0.00001
+      max: 0.1
+    learning_rate_init:
+      type: "log_uniform"
+      min: 0.0001
+      max: 0.1
+      
+  default_params:
+    max_iter: 500
+    random_state: 42
+    early_stopping: true
