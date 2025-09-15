@@ -16,13 +16,13 @@ FEATURE_MIN_MAX = {
     'dem': (-21.0, 1756.0),
     'flowDir': (0.0, 255.0),
     'slope': (0.0, 68.5592),
-    'twi': (-2.0, 21.0),
+    'twi': (-0.94, 21.0),
     'NDVI': (-0.186454, 0.599315),
     'rainfall': (196.525, 1292.31)
 }
 
 # Format: (lon_min, lat_min, lon_max, lat_max)
-STUDY_AREA_BOUNDS = (105.0, 20.0, 106.0, 21.0)
+STUDY_AREA_BOUNDS = (107.452349, 12.999731, 109.371059, 14.703494)
 
 # Total number of data rows (configure this to avoid loading entire file for counting)
 TOTAL_ROWS = 224_000_000  # 224 million rows
