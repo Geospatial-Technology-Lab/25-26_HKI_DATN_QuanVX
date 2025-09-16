@@ -24,11 +24,11 @@ FEATURE_MIN_MAX = {
 # Format: (lon_min, lat_min, lon_max, lat_max)
 STUDY_AREA_BOUNDS = (107.452349, 12.999731, 109.371059, 14.703494)
 
-# Total number of data rows (configure this to avoid loading entire file for counting)
-TOTAL_ROWS = 224_000_000  # 224 million rows
+# Total number of data rows
+TOTAL_ROWS = 224_000_000
 
-# Validation: Ensure all features have min/max values
+# Validation
 assert all(feature in FEATURE_MIN_MAX for feature in FEATURES), \
     "Some features are missing min/max values"
 
-print("✅ Feature configuration loaded successfully")
+print("Feature configuration loaded successfully")
