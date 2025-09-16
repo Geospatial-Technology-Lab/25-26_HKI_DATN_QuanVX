@@ -32,7 +32,9 @@ def normalize_with_config(features: np.ndarray, feature_names: list) -> np.ndarr
     maxs = np.array([FEATURE_MIN_MAX[f][1] for f in feature_names])
     ranges = maxs - mins
     ranges[ranges == 0] = 1
-    return (features - mins) / ranges
+    
+    normalized = (features - mins) / ranges
+    return np.clip(normalized, 0.0, 1.0)  # Giới hạn để tránh giá trị cực lớn
 
 
 def map_features(columns: list) -> dict:
@@ -55,32 +57,27 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
         
         features_map = map_features(gdf.columns)
         if not features_map:
-            # Clean up before return
-            del gdf
-            gc.collect()
+            del gdf; gc.collect()
             return np.array([]), np.array([])
         
         feature_cols = [features_map[f] for f in features_map.keys()]
-        chunk_clean = gdf[feature_cols].dropna()
+        valid_indices = gdf[feature_cols].dropna().index
+        chunk_clean = gdf.loc[valid_indices, feature_cols]
         
         if len(chunk_clean) == 0:
-            # Clean up before return
-            del gdf, chunk_clean
-            gc.collect()
+            del gdf, chunk_clean; gc.collect()
             return np.array([]), np.array([])
         
-        coords = np.array([[g.x, g.y] for g in gdf.geometry.iloc[:len(chunk_clean)]])
+        coords = np.array([[g.x, g.y] for g in gdf.geometry.loc[valid_indices]])
         features = normalize_with_config(chunk_clean.values, list(features_map.keys()))
-        
         # Aggressive cleanup
-        del gdf, chunk_clean, feature_cols, features_map
+        del gdf, chunk_clean, feature_cols, features_map, valid_indices
         gc.collect()
         
         return coords, features
         
     except Exception as e:
         print(f"❌ Chunk {chunk_idx} error: {e}")
-        # Force cleanup on error
         gc.collect()
         return np.array([]), np.array([])
 
@@ -127,7 +124,18 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
                    chunk_size: int = 50000, pixel_size: float = 0.00009) -> None:
     
     print(f"🚀 Creating TIFF predictions")
-    print(f"🔧 Using device: {DEVICE}")
+    
+    # Test file reading
+    try:
+        test_gdf = gpd.read_file(str(file_path), layer=layer_name, rows=10)
+        features_map = map_features(test_gdf.columns)
+        print(f"✅ Data OK, features: {list(features_map.keys())}")
+        del test_gdf; gc.collect()
+        if not features_map:
+            print("❌ No valid features!"); return
+    except Exception as e:
+        print(f"❌ Data error: {e}"); return
+    
     output_dir.mkdir(exist_ok=True)
     
     # Calculate raster from config
@@ -137,48 +145,38 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
     transform = from_bounds(x_min, y_min, x_max, y_max, width, height)
     
     print(f"📊 Raster: {width}x{height} = {width*height:,} pixels")
-    print(f"📊 Using configured row count: {TOTAL_ROWS:,}")
-    
     estimated_chunks = (TOTAL_ROWS // chunk_size) + 1
-    
-    # Calculate optimal number of workers (use half of CPU cores to avoid overload)
     max_workers = max(1, mp.cpu_count() // 2)
-    print(f"🔧 Using {max_workers} parallel workers for chunk processing")
     
-    # Process each model sequentially (one at a time)
+    # Process each model
     for model_name, model in models.items():
-        print(f"\n🔮 Processing: {model_name}")
+        print(f"\n🔮 {model_name}")
         
-        # Create raster array
-        raster = np.full((height, width), np.nan, dtype=np.float32)
+        # Create raster với giá trị mặc định -9999
+        raster = np.full((height, width), -9999.0, dtype=np.float32)
         
-        # Prepare chunk arguments for parallel processing
+        # Process chunks
         chunk_args = [(i, file_path, layer_name, chunk_size) for i in range(estimated_chunks)]
         
-        # Process chunks in parallel
         try:
             with ProcessPoolExecutor(max_workers=max_workers) as executor:
-                # Use tqdm to show progress
                 chunk_results = list(tqdm(
                     executor.map(process_chunk_parallel, chunk_args),
-                    total=len(chunk_args),
-                    desc=f"{model_name} - Loading chunks"
+                    total=len(chunk_args), desc="Loading"
                 ))
             
-            # Clean up chunk arguments to free memory
-            del chunk_args
-            gc.collect()
+            del chunk_args; gc.collect()
             
-            # Process predictions for each chunk
-            for idx, (chunk_idx, (coords, features)) in enumerate(tqdm(chunk_results, desc=f"{model_name} - Predicting")):
-                if len(features) == 0:
-                    continue
+            # Process predictions
+            total_processed = 0
+            for chunk_idx, (coords, features) in tqdm(chunk_results, desc="Predicting"):
+                if len(features) == 0: continue
                 
-                # Predict
+                total_processed += len(features)
+                
                 try:
-                    preds = np.clip(predict_gpu_batch(model, features), 0.00, 1.00)
-                except:
-                    continue
+                    preds = np.clip(predict_gpu_batch(model, features), 0.0, 1.0)
+                except: continue
                 
                 # Map to pixels
                 cols = ((coords[:, 0] - x_min) / pixel_size).astype(int)
@@ -188,44 +186,21 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
                 if valid.any():
                     raster[rows[valid], cols[valid]] = preds[valid]
                 
-                # Aggressive memory cleanup after each chunk
                 del coords, features, preds, cols, rows, valid
-                
-                # Force garbage collection every 10 chunks
-                if idx % 10 == 0:
-                    gc.collect()
-                    if GPU_AVAILABLE:
-                        torch.cuda.empty_cache()
+                if chunk_idx % 20 == 0: gc.collect()
             
-            # Final cleanup after all chunks processed
-            del chunk_results
-            gc.collect()
-                        
+            del chunk_results; gc.collect()
         except Exception as e:
-            print(f"❌ Error in parallel processing for {model_name}: {e}")
-            print("🔄 Falling back to sequential processing...")
-            
-            # Clean up any existing data before fallback
-            if 'chunk_results' in locals():
-                del chunk_results
-            if 'chunk_args' in locals():
-                del chunk_args
-            gc.collect()
-            
-            # Fallback to sequential processing if parallel fails
-            for chunk_idx in tqdm(range(estimated_chunks), desc=f"{model_name} - Sequential"):
+            print(f"❌ Error: {e}")
+            # Fallback sequential processing
+            for chunk_idx in tqdm(range(estimated_chunks), desc="Sequential"):
                 coords, features = load_chunk_clean(file_path, layer_name, chunk_size, chunk_idx)
+                if len(features) == 0: continue
                 
-                if len(features) == 0:
-                    continue
-                
-                # Predict
                 try:
-                    preds = np.clip(predict_gpu_batch(model, features), 0.00, 1.00)
-                except:
-                    continue
+                    preds = np.clip(predict_gpu_batch(model, features), 0.0, 1.0)
+                except: continue
                 
-                # Map to pixels
                 cols = ((coords[:, 0] - x_min) / pixel_size).astype(int)
                 rows = ((y_max - coords[:, 1]) / pixel_size).astype(int)
                 valid = (rows >= 0) & (rows < height) & (cols >= 0) & (cols < width)
@@ -233,41 +208,28 @@ def predict_to_tiff(models: dict, file_path: Path, layer_name: str, output_dir: 
                 if valid.any():
                     raster[rows[valid], cols[valid]] = preds[valid]
                 
-                # Aggressive cleanup in sequential mode too
                 del coords, features, preds, cols, rows, valid
-                
-                # More frequent cleanup in sequential mode
-                if chunk_idx % 10 == 0:
-                    gc.collect()
-                    if GPU_AVAILABLE:
-                        torch.cuda.empty_cache()
+                if chunk_idx % 20 == 0: gc.collect()
         
-        # Save TIFF
+        # Print stats
+        valid_pixels = (raster != -9999)
+        print(f"📊 Processed: {total_processed:,} points")
+        print(f"📊 Valid pixels: {np.sum(valid_pixels):,}/{raster.size:,}")
+        if np.any(valid_pixels):
+            values = raster[valid_pixels]
+            print(f"📊 Range: [{np.min(values):.3f}, {np.max(values):.3f}]")
+        
+        # Save TIFF với nodata = -9999
         output_path = output_dir / f"{model_name}_flood_probability.tif"
         with rasterio.open(
             output_path, 'w', driver='GTiff',
             height=height, width=width, count=1, dtype=np.float32,
-            crs=CRS.from_epsg(4326), transform=transform, nodata=np.nan,
+            crs=CRS.from_epsg(4326), transform=transform, nodata=-9999,
             compress='lzw', tiled=True
         ) as dst:
             dst.write(raster, 1)
         
         print(f"✅ Saved: {output_path.name}")
-        
-        # Aggressive cleanup after each model
-        del raster
-        gc.collect()
-        
-        # Additional GPU cleanup if available
-        if GPU_AVAILABLE:
-            torch.cuda.empty_cache()
-        
-        print(f"🧹 Memory cleaned after {model_name}")
+        del raster; gc.collect()
     
-    # Final cleanup
-    print("🧹 Final memory cleanup...")
-    gc.collect()
-    if GPU_AVAILABLE:
-        torch.cuda.empty_cache()
-    
-    print("🎉 All done!")
+    print("🎉 Done!")

@@ -1,5 +1,3 @@
-# Bỏ qua tất cả file CSV
-*.csv
 
 # Bỏ qua tất cả file mô hình joblib
 *.joblib
