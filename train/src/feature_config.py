@@ -4,7 +4,6 @@ FEATURES = [
     'slope', 'twi', 'NDVI', 'rainfall'
 ]
 
-# Min/Max values for normalization (configure these based on your data)
 FEATURE_MIN_MAX = {
     'lulc': (0.0, 12.0),
     'Density_River': (0.0, 0.000675744),
@@ -21,14 +20,5 @@ FEATURE_MIN_MAX = {
     'rainfall': (196.525, 1292.31)
 }
 
-# Format: (lon_min, lat_min, lon_max, lat_max)
 STUDY_AREA_BOUNDS = (107.452349, 12.999731, 109.371059, 14.703494)
-
-# Total number of data rows
 TOTAL_ROWS = 224_000_000
-
-# Validation
-assert all(feature in FEATURE_MIN_MAX for feature in FEATURES), \
-    "Some features are missing min/max values"
-
-print("Feature configuration loaded successfully")
