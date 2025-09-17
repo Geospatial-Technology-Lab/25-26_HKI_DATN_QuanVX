@@ -11,9 +11,9 @@ from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.svm import SVC
-from xgboost import XGBClassifier
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
+from xgboost import XGBRegressor
 from ml_hyper_parameter import get_model_params
 from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
 
@@ -36,7 +36,7 @@ def train_models():
     feature_columns = [col for col in df.columns if col != 'flood']
     X, y = df[feature_columns].values, df['flood'].values
     
-    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
     
     models = {}
     models_to_train = [
@@ -52,11 +52,11 @@ def train_models():
             continue
         
         if model_type == 'rf':
-            model = RandomForestClassifier(**params, random_state=42, n_jobs=-1)
+            model = RandomForestRegressor(**params, random_state=42, n_jobs=-1)
         elif model_type == 'svm':
-            model = SVC(**params, random_state=42)
+            model = SVR(**params)
         elif model_type == 'xgb':
-            model = XGBClassifier(**params, random_state=42, n_jobs=-1)
+            model = XGBRegressor(**params, random_state=42, n_jobs=-1)
         else:
             continue
         
