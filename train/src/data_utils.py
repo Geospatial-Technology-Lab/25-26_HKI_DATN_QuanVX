@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-import geopandas as gpd
+import arcpy
 import gc
 import rasterio
 from rasterio.transform import from_bounds
@@ -16,11 +16,6 @@ from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from ml_hyper_parameter import get_model_params
 from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
-
-
-def safe_validate_array(arr: np.ndarray, clip_min: float = 0.0, clip_max: float = 1.0) -> np.ndarray:
-    arr = np.where(np.isfinite(arr), arr, 0.0)
-    return np.clip(arr, clip_min, clip_max)
 
 
 def map_features(columns: list) -> dict:
@@ -91,38 +86,93 @@ def normalize_gdb_features(features: np.ndarray, feature_names: list) -> np.ndar
 
 
 def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_idx: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Load and process raw GDB chunk"""
+    """Load and process raw GDB chunk using arcpy"""
     try:
         start = chunk_idx * chunk_size
-        gdf = gpd.read_file(str(file_path), layer=layer_name, rows=chunk_size, skip=start)
+        end = start + chunk_size
         
-        if len(gdf) == 0:
-            return np.array([]), np.array([])
+        # Sử dụng arcpy để đọc dữ liệu từ file geodatabase
+        feature_class = str(file_path) + "\\" + layer_name
         
-        features_map = map_features(gdf.columns)
+        # Lấy danh sách các field
+        field_names = [field.name for field in arcpy.ListFields(feature_class) 
+                      if field.type not in ['OID', 'Geometry']]
+        
+        # Lọc các field cần thiết
+        features_map = map_features(field_names)
         if not features_map:
-            del gdf; gc.collect()
             return np.array([]), np.array([])
         
-        feature_cols = [features_map[f] for f in features_map.keys()]
-        valid_indices = gdf[feature_cols].dropna().index
-        chunk_clean = gdf.loc[valid_indices, feature_cols]
+        feature_cols = list(features_map.keys())
         
-        if len(chunk_clean) == 0:
-            del gdf, chunk_clean; gc.collect()
+        # Đọc dữ liệu từ feature class với SearchCursor
+        coords_list = []
+        features_list = []
+        raw_data_debug = []  # Để debug chunk đầu tiên
+        
+        with arcpy.da.SearchCursor(feature_class, feature_cols + ['SHAPE@XY']) as cursor:
+            count = 0
+            for row in cursor:
+                if count < start:
+                    count += 1
+                    continue
+                if count >= end:
+                    break
+                
+                # Debug: Lưu 20 dòng đầu tiên của chunk đầu tiên
+                if chunk_idx == 0 and len(raw_data_debug) < 20:
+                    raw_data_debug.append(row)
+                
+                # Lấy tọa độ từ geometry
+                xy = row[-1]  # SHAPE@XY
+                if xy is not None:
+                    coords_list.append([xy[0], xy[1]])
+                    
+                    # Lấy giá trị features
+                    feature_values = row[:-1]
+                    # Kiểm tra và xử lý None values (tưưng đương dropna)
+                    if None not in feature_values:
+                        features_list.append(feature_values)
+                    else:
+                        # Loại bỏ nếu có giá trị None
+                        coords_list.pop()
+                
+                count += 1
+        
+        # Debug: In dữ liệu thô cho chunk đầu tiên
+        if chunk_idx == 0 and raw_data_debug:
+            print(f"\n=== DEBUG CHUNK ĐẦU TIÊN ({chunk_idx}) ===")
+            print(f"20 dòng đầu tiên (dữ liệu thô):")
+            for i, row in enumerate(raw_data_debug[:20]):
+                print(f"Dòng {i+1}: {row}")
+            print(f"\nTổng số dòng thô đọc được: {count-start}")
+        
+        if len(coords_list) == 0 or len(features_list) == 0:
+            if chunk_idx == 0:
+                print("Không có dữ liệu hợp lệ sau khi dropna!")
             return np.array([]), np.array([])
         
-        coords = np.array([[g.x, g.y] for g in gdf.geometry.loc[valid_indices]])
-        coords = safe_validate_array(coords, -180.0, 180.0)
+        coords = np.array(coords_list)
         
         # Normalize raw GDB data using min/max ranges
-        features = normalize_gdb_features(chunk_clean.values, list(features_map.keys()))
-        del gdf, chunk_clean, feature_cols, features_map, valid_indices
-        gc.collect()
+        features = np.array(features_list)
+        features = normalize_gdb_features(features, feature_cols)
+        
+        # Debug: In dữ liệu sau khi xử lý cho chunk đầu tiên
+        if chunk_idx == 0:
+            print(f"\nSau khi dropna và chuẩn hóa:")
+            print(f"Số dòng còn lại: {len(features)}")
+            print(f"Các features: {feature_cols}")
+            print(f"5 dòng đầu tiên sau chuẩn hóa:")
+            for i in range(min(5, len(features))):
+                print(f"Dòng {i+1}: coords={coords[i]}, features={features[i]}")
+            print(f"Giá trị min-max của features: min={features.min():.6f}, max={features.max():.6f}")
+            print("=== KẾt THÚC DEBUG ===")
         
         return coords, features
         
-    except Exception:
+    except Exception as e:
+        print(f"Lỗi khi đọc chunk {chunk_idx}: {e}")
         gc.collect()
         return np.array([]), np.array([])
 
@@ -145,11 +195,9 @@ def predict_gpu_batch(model, features, batch_size=8000):
     predictions = []
     for i in range(0, len(features), batch_size):
         batch = features[i:i+batch_size]
-        batch = safe_validate_array(batch, -100.0, 100.0)
         
         try:
             pred = model.predict(batch)
-            pred = safe_validate_array(pred, -1000.0, 1000.0)
             predictions.append(pred)
         except Exception:
             predictions.append(np.zeros(len(batch)))
@@ -171,15 +219,27 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
     
     print("Creating TIFF predictions")
     
-    # Test file reading
+    # Test file reading với arcpy
     try:
-        test_gdf = gpd.read_file(str(file_path), layer=layer_name, rows=10)
-        features_map = map_features(test_gdf.columns)
-        del test_gdf; gc.collect()
+        feature_class = str(file_path) + "\\" + layer_name
+        
+        # Kiểm tra xem feature class có tồn tại không
+        if not arcpy.Exists(feature_class):
+            print(f"Feature class không tồn tại: {feature_class}")
+            return
+        
+        # Lấy danh sách các field
+        field_names = [field.name for field in arcpy.ListFields(feature_class) 
+                      if field.type not in ['OID', 'Geometry']]
+        
+        features_map = map_features(field_names)
         if not features_map:
-            print("No valid features!"); return
+            print("Không có feature hợp lệ!")
+            return
+            
     except Exception as e:
-        print(f"Data error: {e}"); return
+        print(f"Lỗi dữ liệu: {e}")
+        return
     
     output_dir.mkdir(exist_ok=True)
     
@@ -219,7 +279,6 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
                 
                 try:
                     preds = predict_gpu_batch(model, features)
-                    preds = safe_validate_array(preds)
                 except Exception:
                     preds = np.zeros(len(features))
                     continue
@@ -248,7 +307,6 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
                 
                 try:
                     preds = predict_gpu_batch(model, features)
-                    preds = safe_validate_array(preds)
                 except Exception:
                     preds = np.zeros(len(features))
                     continue
