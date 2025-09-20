@@ -576,8 +576,8 @@ def main():
             break
     
     # Cấu hình đường dẫn - CẬP NHẬT THEO MÁY CỦA BẠN
-    data_file = Path(r"D:\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")
-    csv_file = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
+    data_file = Path(r"D:\QuanVX\25-26_HKI_DATN_QuanVX\train\data\Default.gdb\a000000c8.gdbtable")
+    csv_file = Path(__file__).parent.parent / "data" / "training_points.csv"
     output_dir = Path(__file__).parent.parent / "results"
     
     # Kiểm tra file tồn tại
@@ -586,7 +586,7 @@ def main():
         print(f"Đường dẫn hiện tại: {data_file}")
         return
     
-    if not Path(csv_file).exists():
+    if not csv_file.exists():
         print("❌ CSV training file không tồn tại!")
         print(f"Đường dẫn hiện tại: {csv_file}")
         return
@@ -602,7 +602,7 @@ def main():
         layer_name="RasterT_Extract1",
         output_dir=output_dir,
         chunk_size=50000,
-        csv_path=csv_file
+        csv_path=str(csv_file)
     )
     
     print("✅ Hoàn thành!")
