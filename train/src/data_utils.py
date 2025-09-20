@@ -23,7 +23,6 @@ def map_features(columns: list) -> dict:
 
 
 def train_models():
-    """Load CSV data (already normalized) and train models"""
     csv_path = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
     
     # CSV data is already normalized, use directly
@@ -31,7 +30,7 @@ def train_models():
     feature_columns = [col for col in df.columns if col != 'flood']
     X, y = df[feature_columns].values, df['flood'].values
     
-    X_train, _, y_train, _ = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     models = {}
     models_to_train = [
@@ -59,6 +58,14 @@ def train_models():
         model_name = f"{optimization_method}_{model_type}"
         models[model_name] = model
         print(f"Trained {model_name}")
+
+        y_pred = model.predict(X_test)
+
+        rmse = sqrt(np.mean((y_test - y_pred) ** 2))
+        mae = np.mean(np.abs(y_test - y_pred))
+        r2 = model.score(X_test, y_test)
+
+        print (f"{model_name}: RMSE={rmse:.2f}, MAE={mae:.2f}, R2={r2:.2f}")
     
     # Free training data
     del df, X, y, X_train, y_train
