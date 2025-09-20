@@ -1,3 +1,9 @@
+"""
+Flood Prediction System - Complete Integrated Version
+Hệ thống dự đoán lũ lụt - Phiên bản tích hợp hoàn chỉnh
+Tất cả chức năng trong một file duy nhất
+"""
+
 import numpy as np
 import pandas as pd
 import arcpy
@@ -10,27 +16,222 @@ from typing import Tuple
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing as mp
+from math import sqrt
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
-from ml_hyper_parameter import get_model_params
-from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
+import os
+
+
+# ============================================================================
+# CONFIGURATION DATA - Dữ liệu cấu hình
+# ============================================================================
+
+FEATURES = [
+    'lulc', 'Density_River', 'Density_Road', 'Distan2river_met', 
+    'Distan2road_met', 'aspect', 'curvature', 'dem', 'flowDir', 
+    'slope', 'twi', 'NDVI', 'rainfall'
+]
+
+FEATURE_MIN_MAX = {
+    'lulc': (0.0, 12.0),
+    'Density_River': (0.0, 0.000675744),
+    'Density_Road': (0.0, 16.5452),
+    'Distan2river_met': (0.0, 12407.1),
+    'Distan2road_met': (0.0, 14716.4),
+    'aspect': (-1.0, 360.0),
+    'curvature': (-17.4153, 16.4418),
+    'dem': (-21.0, 1756.0),
+    'flowDir': (0.0, 255.0),
+    'slope': (0.0, 68.5592),
+    'twi': (-0.94, 21.0),
+    'NDVI': (-0.186454, 0.599315),
+    'rainfall': (196.525, 1292.31)
+}
+
+STUDY_AREA_BOUNDS = (107.452349, 12.999731, 109.371059, 14.703494)
+TOTAL_ROWS = 224_000_000
+
+# Random Forest Parameters
+RF_PARAMS = {
+    'pso_rf': {
+        'n_estimators': 1000,
+        'max_depth': 50,
+        'min_samples_split': 20,
+        'min_samples_leaf': 1,
+        'max_features': 'sqrt',
+        'bootstrap': False,
+        'max_leaf_nodes': 1000,
+    },
+    
+    'po_rf': {
+        'n_estimators': 50,
+        'max_depth': 14,
+        'min_samples_split': 2,
+        'min_samples_leaf': 1,
+        'max_features': 'log2',
+        'bootstrap': False,
+        'max_leaf_nodes': 879,
+    },
+    
+    'rso_rf': {
+        'n_estimators': 459,
+        'max_depth': 16,
+        'min_samples_split': 13,
+        'min_samples_leaf': 9,
+        'max_features': 'sqrt',
+        'bootstrap': False,
+        'max_leaf_nodes': 911,
+    }
+}
+
+# SVM Parameters
+SVM_PARAMS = {
+    'pso_svm': {
+        'C': 1.19288,
+        'gamma': 0.078738,
+        'kernel': 'poly',
+        'degree': 4,
+        'coef0': 10,
+        'tol': 1e-05,
+        'epsilon': 0.1178,
+        'max_iter': 42540,
+        'shrinking': True
+    },
+    
+    'po_svm': {
+        'C': 566.6982,
+        'gamma': 0.153971,
+        'kernel': 'rbf',
+        'degree': 5,
+        'coef0': 0,
+        'tol': 0.001717,
+        'epsilon': 0.01,
+        'max_iter': 50000,
+        'shrinking': True
+    },
+    
+    'rso_svm': {
+        'C': 0.001235,
+        'gamma': 4.647095,
+        'kernel': 'poly',
+        'degree': 5,
+        'coef0': 1.76137,
+        'tol': 0.000319,
+        'epsilon': 0.526529,
+        'max_iter': 43628,
+        'shrinking': False
+    }
+}
+
+# XGBoost Parameters
+XGB_PARAMS = {
+    'pso_xgb': {
+        'n_estimators': 1000,
+        'max_depth': 15,
+        'learning_rate': 0.01,
+        'subsample': 1.0,
+        'colsample_bytree': 1.0,
+        'colsample_bylevel': 0.9549,
+        'colsample_bynode': 1.0,
+        'reg_alpha': 0.059774,
+        'reg_lambda': 1.0,
+        'min_child_weight': 1,
+        'gamma': 0,
+        'max_delta_step': 10,
+        'scale_pos_weight': 0.5
+    },
+    
+    'po_xgb': {
+        'n_estimators': 813,
+        'max_depth': 15,
+        'learning_rate': 0.01,
+        'subsample': 1.0,
+        'colsample_bytree': 1.0,
+        'colsample_bylevel': 1.0,
+        'colsample_bynode': 0.995257,
+        'reg_alpha': 0.166811,
+        'reg_lambda': 0.718503,
+        'min_child_weight': 1,
+        'gamma': 0,
+        'max_delta_step': 6,
+        'scale_pos_weight': 0.5
+    },
+    
+    'rso_xgb': {
+        'n_estimators': 460,
+        'max_depth': 7,
+        'learning_rate': 0.029195,
+        'subsample': 0.096524,
+        'colsample_bytree': 0.826872,
+        'colsample_bylevel': 0.88716,
+        'colsample_bynode': 0.68051,
+        'reg_alpha': 0.499231,
+        'reg_lambda': 0.884683,
+        'min_child_weight': 8,
+        'gamma': 0.714358,
+        'max_delta_step': 2,
+        'scale_pos_weight': 0.8699
+    }
+}
+
+
+# ============================================================================
+# UTILITY FUNCTIONS - Các hàm tiện ích
+# ============================================================================
+
+def get_model_params(model_type: str, optimization_method: str) -> dict:
+    """Lấy tham số model dựa trên loại model và phương pháp tối ưu"""
+    param_map = {
+        'rf': RF_PARAMS,
+        'svm': SVM_PARAMS,
+        'xgb': XGB_PARAMS
+    }
+    
+    key = f"{optimization_method}_{model_type}"
+    
+    if model_type in param_map and key in param_map[model_type]:
+        return param_map[model_type][key].copy()
+    else:
+        print(f"⚠️ No parameters found for {key}")
+        return {}
+
+
+def safe_validate_array(arr: np.ndarray) -> np.ndarray:
+    """Kiểm tra và xử lý array an toàn"""
+    if not isinstance(arr, np.ndarray):
+        arr = np.array(arr)
+    
+    # Thay thế NaN và inf bằng 0
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    
+    # Clip values to reasonable range
+    arr = np.clip(arr, -1e6, 1e6)
+    
+    return arr
 
 
 def map_features(columns: list) -> dict:
+    """Map các cột có trong dữ liệu với FEATURES cần thiết"""
     return {col: col for col in columns if col in FEATURES}
 
 
-def train_models():
-    csv_path = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
+# ============================================================================
+# MODEL TRAINING - Huấn luyện model
+# ============================================================================
+
+def train_models(csv_path: str = None):
+    """Huấn luyện tất cả các models"""
+    if csv_path is None:
+        csv_path = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
     
     # CSV data is already normalized, use directly
     df = pd.read_csv(csv_path).dropna()
     feature_columns = [col for col in df.columns if col != 'flood']
     X, y = df[feature_columns].values, df['flood'].values
     
-    X_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     models = {}
     models_to_train = [
@@ -65,7 +266,7 @@ def train_models():
         mae = np.mean(np.abs(y_test - y_pred))
         r2 = model.score(X_test, y_test)
 
-        print (f"{model_name}: RMSE={rmse:.2f}, MAE={mae:.2f}, R2={r2:.2f}")
+        print(f"{model_name}: RMSE={rmse:.2f}, MAE={mae:.2f}, R2={r2:.2f}")
     
     # Free training data
     del df, X, y, X_train, y_train
@@ -73,6 +274,10 @@ def train_models():
     
     return models
 
+
+# ============================================================================
+# DATA PROCESSING - Xử lý dữ liệu
+# ============================================================================
 
 def normalize_gdb_features(features: np.ndarray, feature_names: list) -> np.ndarray:
     """Normalize raw GDB data using FEATURE_MIN_MAX"""
@@ -174,7 +379,7 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
             for i in range(min(5, len(features))):
                 print(f"Dòng {i+1}: coords={coords[i]}, features={features[i]}")
             print(f"Giá trị min-max của features: min={features.min():.6f}, max={features.max():.6f}")
-            print("=== KẾt THÚC DEBUG ===")
+            print("=== KẾT THÚC DEBUG ===")
         
         return coords, features
         
@@ -185,11 +390,17 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
 
 
 def process_chunk_parallel(chunk_args):
+    """Xử lý chunk song song"""
     chunk_idx, file_path, layer_name, chunk_size = chunk_args
     return chunk_idx, load_chunk_clean(file_path, layer_name, chunk_size, chunk_idx)
 
 
+# ============================================================================
+# PREDICTION - Dự đoán
+# ============================================================================
+
 def predict_gpu_batch(model, features, batch_size=8000):
+    """Dự đoán theo batch để tối ưu memory"""
     if len(features) == 0:
         return np.array([])
     
@@ -218,10 +429,12 @@ def predict_gpu_batch(model, features, batch_size=8000):
 
 
 def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path, 
-                   chunk_size: int = 50000, pixel_size: float = 0.00009) -> None:
+                   chunk_size: int = 50000, pixel_size: float = 0.00009,
+                   csv_path: str = None) -> None:
+    """Tạo dự đoán và lưu thành file TIFF"""
     
     print("Training models...")
-    models = train_models()
+    models = train_models(csv_path)
     print(f"Trained {len(models)} models")
     
     print("Creating TIFF predictions")
@@ -347,3 +560,53 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
         del raster; gc.collect()
     
     print("Done!")
+
+
+# ============================================================================
+# MAIN EXECUTION - Thực thi chính
+# ============================================================================
+
+def main():
+    """Hàm chính để chạy toàn bộ quá trình"""
+    # Set GDAL_DATA
+    gdal_paths = ["/usr/share/gdal", "/usr/local/share/gdal"]
+    for gdal_path in gdal_paths:
+        if Path(gdal_path).exists():
+            os.environ['GDAL_DATA'] = str(gdal_path)
+            break
+    
+    # Cấu hình đường dẫn - CẬP NHẬT THEO MÁY CỦA BẠN
+    data_file = Path(r"D:\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")
+    csv_file = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
+    output_dir = Path(__file__).parent.parent / "results"
+    
+    # Kiểm tra file tồn tại
+    if not data_file.exists():
+        print("❌ Data file không tồn tại! Cập nhật đường dẫn trong main()")
+        print(f"Đường dẫn hiện tại: {data_file}")
+        return
+    
+    if not Path(csv_file).exists():
+        print("❌ CSV training file không tồn tại!")
+        print(f"Đường dẫn hiện tại: {csv_file}")
+        return
+    
+    print("🚀 Bắt đầu quá trình dự đoán lũ lụt...")
+    print(f"📁 Data file: {data_file}")
+    print(f"📊 Training CSV: {csv_file}")
+    print(f"💾 Output dir: {output_dir}")
+    
+    # Chạy dự đoán
+    predict_to_tiff(
+        file_path=data_file, 
+        layer_name="RasterT_Extract1",
+        output_dir=output_dir,
+        chunk_size=50000,
+        csv_path=csv_file
+    )
+    
+    print("✅ Hoàn thành!")
+
+
+if __name__ == "__main__":
+    main()

@@ -127,56 +127,14 @@ XGB_PARAMS = {
     }
 }
 
-# MLP Parameters (if needed)
-MLP_PARAMS = {
-    'pso_mlp': {
-        'hidden_layer_sizes': (100, 50),
-        'activation': 'relu',
-        'solver': 'adam',
-        'alpha': 0.0001,
-        'learning_rate': 'constant',
-        'learning_rate_init': 0.001,
-        'max_iter': 1000
-    },
-    
-    'po_mlp': {
-        'hidden_layer_sizes': (150, 75),
-        'activation': 'tanh',
-        'solver': 'lbfgs',
-        'alpha': 0.001,
-        'learning_rate': 'adaptive',
-        'learning_rate_init': 0.01,
-        'max_iter': 500
-    },
-    
-    'rso_mlp': {
-        'hidden_layer_sizes': (200, 100, 50),
-        'activation': 'logistic',
-        'solver': 'sgd',
-        'alpha': 0.01,
-        'learning_rate': 'invscaling',
-        'learning_rate_init': 0.1,
-        'max_iter': 2000
-    }
-}
 
 # Utility function to get parameters
 def get_model_params(model_type: str, optimization_method: str) -> dict:
-    """
-    Get parameters for specific model and optimization method
-    
-    Args:
-        model_type: 'rf', 'svm', 'xgb', 'mlp'
-        optimization_method: 'pso', 'po', 'rso'
-    
-    Returns:
-        dict: Model parameters
-    """
+
     param_map = {
         'rf': RF_PARAMS,
         'svm': SVM_PARAMS,
-        'xgb': XGB_PARAMS,
-        'mlp': MLP_PARAMS
+        'xgb': XGB_PARAMS
     }
     
     key = f"{optimization_method}_{model_type}"
@@ -186,21 +144,3 @@ def get_model_params(model_type: str, optimization_method: str) -> dict:
     else:
         print(f"⚠️ No parameters found for {key}")
         return {}
-
-# Example usage (commented out - not in use):
-"""
-# To use these parameters:
-from ml_hyper_parameter import get_model_params
-
-# Get PSO-optimized Random Forest parameters
-rf_params = get_model_params('rf', 'pso')
-model = RandomForestClassifier(**rf_params)
-
-# Get PO-optimized SVM parameters  
-svm_params = get_model_params('svm', 'po')
-model = SVC(**svm_params)
-
-# Get RSO-optimized XGBoost parameters
-xgb_params = get_model_params('xgb', 'rso') 
-model = XGBClassifier(**xgb_params)
-"""
