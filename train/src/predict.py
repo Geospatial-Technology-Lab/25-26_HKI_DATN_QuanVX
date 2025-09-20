@@ -12,7 +12,7 @@ def main():
             break
     
     # Data file path - update this
-    data_file = Path(r"D:\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")
+    data_file = Path(r"Z:\guest01\QuanVX\QuanVX\QuanVX\Default.gdb\a000000c8.gdbtable")
     if not data_file.exists():
         print("Data file not found! Update the path in predict.py")
         return
