@@ -23,7 +23,7 @@ def map_features(columns: list) -> dict:
 
 
 def train_models():
-    csv_path = "/run/media/quan/Quan Vu/25-26_HKI_DATN_QuanVX/train/data/training_points.csv"
+    csv_path = r"Z:\guest01\QuanVX\25-26_HKI_DATN_QuanVX\train\data\training_points.csv"
     
     # CSV data is already normalized, use directly
     df = pd.read_csv(csv_path).dropna()
