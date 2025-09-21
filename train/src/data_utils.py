@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-import arcpy
+import geopandas as gpd
 import gc
 import rasterio
 from rasterio.transform import from_bounds
@@ -14,8 +14,17 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
+from math import sqrt
 from ml_hyper_parameter import get_model_params
 from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
+
+
+def safe_validate_array(arr: np.ndarray) -> np.ndarray:
+    if arr.size == 0:
+        return arr
+    arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+    arr = np.clip(arr, 0.0, 1.0)
+    return arr.astype(np.float32)
 
 
 def map_features(columns: list) -> dict:
@@ -25,12 +34,11 @@ def map_features(columns: list) -> dict:
 def train_models():
     csv_path = r"Z:\guest01\QuanVX\25-26_HKI_DATN_QuanVX\train\data\training_points.csv"
     
-    # CSV data is already normalized, use directly
     df = pd.read_csv(csv_path).dropna()
     feature_columns = [col for col in df.columns if col != 'flood']
     X, y = df[feature_columns].values, df['flood'].values
     
-    X_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     
     models = {}
     models_to_train = [
@@ -67,7 +75,6 @@ def train_models():
 
         print (f"{model_name}: RMSE={rmse:.2f}, MAE={mae:.2f}, R2={r2:.2f}")
     
-    # Free training data
     del df, X, y, X_train, y_train
     gc.collect()
     
@@ -75,7 +82,6 @@ def train_models():
 
 
 def normalize_gdb_features(features: np.ndarray, feature_names: list) -> np.ndarray:
-    """Normalize raw GDB data using FEATURE_MIN_MAX"""
     if len(features) == 0:
         return features
     
@@ -87,94 +93,62 @@ def normalize_gdb_features(features: np.ndarray, feature_names: list) -> np.ndar
     if features.shape[1] != len(mins):
         return np.zeros_like(features)
     
-    # Normalize raw GDB data: (value - min) / (max - min)
     normalized = (features - mins) / ranges
     return safe_validate_array(normalized)
 
 
 def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_idx: int) -> Tuple[np.ndarray, np.ndarray]:
-    """Load and process raw GDB chunk using arcpy"""
     try:
         start = chunk_idx * chunk_size
         end = start + chunk_size
         
-        # Sử dụng arcpy để đọc dữ liệu từ file geodatabase
-        feature_class = str(file_path) + "\\" + layer_name
+        gdb_path = str(file_path)
         
-        # Lấy danh sách các field
-        field_names = [field.name for field in arcpy.ListFields(feature_class) 
-                      if field.type not in ['OID', 'Geometry']]
+        try:
+            gdf = gpd.read_file(gdb_path, layer=layer_name)
+            gdf_chunk = gdf.iloc[start:end].copy()
+            
+            if len(gdf_chunk) == 0:
+                return np.array([]), np.array([])
+                
+        except Exception as e:
+            print(f"Lỗi khi đọc geodatabase: {e}")
+            return np.array([]), np.array([])
         
-        # Lọc các field cần thiết
-        features_map = map_features(field_names)
+        numeric_columns = [col for col in gdf_chunk.columns 
+                          if col != 'geometry' and gdf_chunk[col].dtype in ['int64', 'float64', 'int32', 'float32']]
+        
+        features_map = map_features(numeric_columns)
         if not features_map:
             return np.array([]), np.array([])
         
         feature_cols = list(features_map.keys())
         
-        # Đọc dữ liệu từ feature class với SearchCursor
         coords_list = []
         features_list = []
-        raw_data_debug = []  # Để debug chunk đầu tiên
         
-        with arcpy.da.SearchCursor(feature_class, feature_cols + ['SHAPE@XY']) as cursor:
-            count = 0
-            for row in cursor:
-                if count < start:
-                    count += 1
-                    continue
-                if count >= end:
-                    break
+        for idx, row in gdf_chunk.iterrows():
+            geom = row.geometry
+            if geom is not None and not geom.is_empty:
+                if geom.geom_type == 'Point':
+                    coords_list.append([geom.x, geom.y])
+                else:
+                    centroid = geom.centroid
+                    coords_list.append([centroid.x, centroid.y])
                 
-                # Debug: Lưu 20 dòng đầu tiên của chunk đầu tiên
-                if chunk_idx == 0 and len(raw_data_debug) < 20:
-                    raw_data_debug.append(row)
+                feature_values = [row[col] for col in feature_cols]
                 
-                # Lấy tọa độ từ geometry
-                xy = row[-1]  # SHAPE@XY
-                if xy is not None:
-                    coords_list.append([xy[0], xy[1]])
-                    
-                    # Lấy giá trị features
-                    feature_values = row[:-1]
-                    # Kiểm tra và xử lý None values (tưưng đương dropna)
-                    if None not in feature_values:
-                        features_list.append(feature_values)
-                    else:
-                        # Loại bỏ nếu có giá trị None
-                        coords_list.pop()
-                
-                count += 1
-        
-        # Debug: In dữ liệu thô cho chunk đầu tiên
-        if chunk_idx == 0 and raw_data_debug:
-            print(f"\n=== DEBUG CHUNK ĐẦU TIÊN ({chunk_idx}) ===")
-            print(f"20 dòng đầu tiên (dữ liệu thô):")
-            for i, row in enumerate(raw_data_debug[:20]):
-                print(f"Dòng {i+1}: {row}")
-            print(f"\nTổng số dòng thô đọc được: {count-start}")
+                if not any(pd.isna(val) for val in feature_values):
+                    features_list.append(feature_values)
+                else:
+                    coords_list.pop()
         
         if len(coords_list) == 0 or len(features_list) == 0:
-            if chunk_idx == 0:
-                print("Không có dữ liệu hợp lệ sau khi dropna!")
             return np.array([]), np.array([])
         
         coords = np.array(coords_list)
-        
-        # Normalize raw GDB data using min/max ranges
         features = np.array(features_list)
         features = normalize_gdb_features(features, feature_cols)
-        
-        # Debug: In dữ liệu sau khi xử lý cho chunk đầu tiên
-        if chunk_idx == 0:
-            print(f"\nSau khi dropna và chuẩn hóa:")
-            print(f"Số dòng còn lại: {len(features)}")
-            print(f"Các features: {feature_cols}")
-            print(f"5 dòng đầu tiên sau chuẩn hóa:")
-            for i in range(min(5, len(features))):
-                print(f"Dòng {i+1}: coords={coords[i]}, features={features[i]}")
-            print(f"Giá trị min-max của features: min={features.min():.6f}, max={features.max():.6f}")
-            print("=== KẾt THÚC DEBUG ===")
         
         return coords, features
         
@@ -226,20 +200,14 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
     
     print("Creating TIFF predictions")
     
-    # Test file reading với arcpy
     try:
-        feature_class = str(file_path) + "\\" + layer_name
+        gdb_path = str(file_path)
+        gdf = gpd.read_file(gdb_path, layer=layer_name, rows=1)
         
-        # Kiểm tra xem feature class có tồn tại không
-        if not arcpy.Exists(feature_class):
-            print(f"Feature class không tồn tại: {feature_class}")
-            return
+        numeric_columns = [col for col in gdf.columns 
+                          if col != 'geometry' and gdf[col].dtype in ['int64', 'float64', 'int32', 'float32']]
         
-        # Lấy danh sách các field
-        field_names = [field.name for field in arcpy.ListFields(feature_class) 
-                      if field.type not in ['OID', 'Geometry']]
-        
-        features_map = map_features(field_names)
+        features_map = map_features(numeric_columns)
         if not features_map:
             print("Không có feature hợp lệ!")
             return
@@ -250,7 +218,6 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
     
     output_dir.mkdir(exist_ok=True)
     
-    # Calculate raster from config
     x_min, y_min, x_max, y_max = STUDY_AREA_BOUNDS
     width = int((x_max - x_min) / pixel_size) + 1
     height = int((y_max - y_min) / pixel_size) + 1
@@ -259,13 +226,11 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
     estimated_chunks = (TOTAL_ROWS // chunk_size) + 1
     max_workers = max(1, mp.cpu_count() // 2)
     
-    # Process each model
     for model_name, model in models.items():
         print(f"\n{model_name}")
         
         raster = np.full((height, width), -9999.0, dtype=np.float32)
         
-        # Process chunks
         chunk_args = [(i, file_path, layer_name, chunk_size) for i in range(estimated_chunks)]
         
         try:
@@ -277,7 +242,6 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
             
             del chunk_args; gc.collect()
             
-            # Process predictions
             total_processed = 0
             for chunk_idx, (coords, features) in tqdm(chunk_results, desc="Predicting"):
                 if len(features) == 0: continue
@@ -290,7 +254,6 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
                     preds = np.zeros(len(features))
                     continue
                 
-                # Map to pixels
                 cols = ((coords[:, 0] - x_min) / pixel_size).astype(np.int32)
                 rows = ((y_max - coords[:, 1]) / pixel_size).astype(np.int32)
                 
@@ -302,9 +265,8 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
                     preds_valid = preds[valid].astype(np.float32)
                     raster[valid_rows, valid_cols] = preds_valid
                 
-                # Clean up after each chunk
                 del coords, features, preds, cols, rows, valid, valid_cols, valid_rows, preds_valid
-                if chunk_idx % 10 == 0: gc.collect()  # More frequent cleanup
+                if chunk_idx % 10 == 0: gc.collect()
             
             del chunk_results; gc.collect()
         except Exception:
@@ -329,11 +291,9 @@ def predict_to_tiff(file_path: Path, layer_name: str, output_dir: Path,
                     preds_valid = preds[valid].astype(np.float32)
                     raster[valid_rows, valid_cols] = preds_valid
                 
-                # Clean up after each chunk
                 del coords, features, preds, cols, rows, valid, valid_cols, valid_rows, preds_valid
-                if chunk_idx % 10 == 0: gc.collect()  # More frequent cleanup
+                if chunk_idx % 10 == 0: gc.collect()
         
-        # Save TIFF
         output_path = output_dir / f"{model_name}_flood_probability.tif"
         with rasterio.open(
             output_path, 'w', driver='GTiff',
