@@ -115,6 +115,25 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
             print(f"Lỗi khi đọc geodatabase: {e}")
             return np.array([]), np.array([])
         
+        # In dữ liệu thô chỉ ở chunk đầu tiên
+        if chunk_idx == 0:
+            print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU THÔ (50 dòng đầu) ===")
+            print(f"Tổng số dòng trong chunk: {len(gdf_chunk)}")
+            print("\nCác cột có sẵn:")
+            for col in gdf_chunk.columns:
+                if col != 'geometry':
+                    print(f"  {col}: {gdf_chunk[col].dtype}")
+            
+            print(f"\n50 dòng đầu tiên:")
+            display_data = gdf_chunk.head(50)
+            for idx, row in display_data.iterrows():
+                geom_info = f"geom_type={row.geometry.geom_type}" if row.geometry is not None else "geometry=None"
+                feature_values = []
+                for col in gdf_chunk.columns:
+                    if col != 'geometry':
+                        feature_values.append(f"{col}={row[col]}")
+                print(f"Row {idx}: {geom_info}, {', '.join(feature_values[:5])}...")  # Chỉ in 5 feature đầu
+        
         numeric_columns = [col for col in gdf_chunk.columns 
                           if col != 'geometry' and gdf_chunk[col].dtype in ['int64', 'float64', 'int32', 'float32']]
         
@@ -149,6 +168,25 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
         coords = np.array(coords_list)
         features = np.array(features_list)
         features = normalize_gdb_features(features, feature_cols)
+        
+        # In dữ liệu sau tiền xử lý chỉ ở chunk đầu tiên
+        if chunk_idx == 0:
+            print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU SAU TIỀN XỬ LÝ ===")
+            print(f"Số dòng còn lại sau lọc: {len(coords)}")
+            print(f"Các feature được sử dụng: {feature_cols}")
+            print(f"Shape của coords: {coords.shape}")
+            print(f"Shape của features: {features.shape}")
+            
+            print(f"\nDữ liệu đã được chuẩn hóa (tối đa 20 dòng):")
+            max_display = min(20, len(coords))
+            for i in range(max_display):
+                coord_str = f"coords=({coords[i][0]:.6f}, {coords[i][1]:.6f})"
+                feature_str = ", ".join([f"{feature_cols[j]}={features[i][j]:.4f}" for j in range(min(5, len(feature_cols)))])
+                print(f"Row {i}: {coord_str}, features=[{feature_str}...]")
+            
+            if len(coords) > 20:
+                print(f"... và {len(coords) - 20} dòng khác")
+            print("=" * 50)
         
         return coords, features
         
