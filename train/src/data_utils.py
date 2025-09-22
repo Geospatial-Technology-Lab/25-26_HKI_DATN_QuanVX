@@ -15,6 +15,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from xgboost import XGBRegressor
 from math import sqrt
+import fiona
 from ml_hyper_parameter import get_model_params
 from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, TOTAL_ROWS
 
@@ -105,95 +106,109 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
         gdb_path = str(file_path)
         
         try:
-            gdf = gpd.read_file(gdb_path, layer=layer_name)
-            gdf_chunk = gdf.iloc[start:end].copy()
+            # Use fiona for streaming read - only read the chunk we need
+            coords_list = []
+            features_list = []
             
-            if len(gdf_chunk) == 0:
+            with fiona.open(gdb_path, layer=layer_name) as src:
+                # Get feature schema info only once
+                if chunk_idx == 0:
+                    print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU THÔ ===\n")
+                    print(f"Total features in layer: {len(src)}")
+                    print(f"Properties: {list(src.schema['properties'].keys())}")
+                    print(f"\n50 dòng đầu tiên (dữ liệu thô):")
+                
+                # Skip to start position and read only chunk_size records
+                current_idx = 0
+                records_read = 0
+                raw_data_for_display = []  # Store raw data for display
+                
+                for feature in src:
+                    if current_idx < start:
+                        current_idx += 1
+                        continue
+                    
+                    if records_read >= chunk_size:
+                        break
+                    
+                    # Store raw data for display (first 50 records)
+                    if chunk_idx == 0 and records_read < 50:
+                        geom_info = f"geom_type={feature['geometry']['type']}" if feature['geometry'] else "geometry=None"
+                        props_info = ", ".join([f"{k}={v}" for k, v in list(feature['properties'].items())[:5]])
+                        raw_data_for_display.append(f"Record {records_read}: {geom_info}, {props_info}...")
+                    
+                    # Process this feature
+                    geom = feature['geometry']
+                    props = feature['properties']
+                    
+                    if geom and geom['type'] in ['Point', 'Polygon', 'MultiPolygon']:
+                        # Extract coordinates
+                        if geom['type'] == 'Point':
+                            coords = geom['coordinates']
+                        else:
+                            # Get centroid for polygons
+                            import shapely.geometry as sg
+                            shape = sg.shape(geom)
+                            centroid = shape.centroid
+                            coords = [centroid.x, centroid.y]
+                        
+                        coords_list.append(coords)
+                        
+                        # Extract numeric features
+                        feature_values = []
+                        for col in FEATURES:
+                            if col in props:
+                                val = props[col]
+                                if val is not None and not pd.isna(val):
+                                    feature_values.append(float(val))
+                                else:
+                                    feature_values.append(0.0)
+                            else:
+                                feature_values.append(0.0)
+                        
+                        features_list.append(feature_values)
+                    
+                    records_read += 1
+                    current_idx += 1
+                
+                # Print raw data for first chunk
+                if chunk_idx == 0:
+                    for raw_line in raw_data_for_display:
+                        print(raw_line)
+            
+            if len(coords_list) == 0 or len(features_list) == 0:
                 return np.array([]), np.array([])
+            
+            coords = np.array(coords_list)
+            features = np.array(features_list)
+            
+            # Normalize features
+            if len(features) > 0:
+                features = normalize_gdb_features(features, FEATURES)
+            
+            # Debug info for first chunk only
+            if chunk_idx == 0 and len(coords) > 0:
+                print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU SAU TIỀN XỬ LÝ ===")
+                print(f"Số dòng còn lại sau lọc: {len(coords)}")
+                print(f"Các feature được sử dụng: {FEATURES}")
+                print(f"Shape của coords: {coords.shape}")
+                print(f"Shape của features: {features.shape}")
                 
+                print(f"\nDữ liệu đã được chuẩn hóa (50 dòng đầu):")
+                max_display = min(50, len(coords))
+                for i in range(max_display):
+                    coord_str = f"coords=({coords[i][0]:.6f}, {coords[i][1]:.6f})"
+                    feature_str = ", ".join([f"{FEATURES[j]}={features[i][j]:.4f}" for j in range(min(5, len(FEATURES)))])
+                    print(f"Row {i}: {coord_str}, features=[{feature_str}...]")
+                
+                if len(coords) > 50:
+                    print(f"... và {len(coords) - 50} dòng khác")
+                print("=" * 50)
+            
+            return coords, features
         except Exception as e:
-            print(f"Lỗi khi đọc geodatabase: {e}")
+            print(f"Error reading geodatabase chunk {chunk_idx}: {e}")
             return np.array([]), np.array([])
-        
-        # In dữ liệu thô chỉ ở chunk đầu tiên
-        if chunk_idx == 0:
-            print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU THÔ (50 dòng đầu) ===")
-            print(f"Tổng số dòng trong chunk: {len(gdf_chunk)}")
-            print("\nCác cột có sẵn:")
-            for col in gdf_chunk.columns:
-                if col != 'geometry':
-                    print(f"  {col}: {gdf_chunk[col].dtype}")
-            
-            print(f"\n50 dòng đầu tiên:")
-            display_data = gdf_chunk.head(50)
-            for idx, row in display_data.iterrows():
-                geom_info = f"geom_type={row.geometry.geom_type}" if row.geometry is not None else "geometry=None"
-                feature_values = []
-                for col in gdf_chunk.columns:
-                    if col != 'geometry':
-                        feature_values.append(f"{col}={row[col]}")
-                print(f"Row {idx}: {geom_info}, {', '.join(feature_values[:5])}...")  # Chỉ in 5 feature đầu
-        
-        numeric_columns = [col for col in gdf_chunk.columns 
-                          if col != 'geometry' and gdf_chunk[col].dtype in ['int64', 'float64', 'int32', 'float32']]
-        
-        features_map = map_features(numeric_columns)
-        if not features_map:
-            return np.array([]), np.array([])
-        
-        feature_cols = list(features_map.keys())
-        
-        coords_list = []
-        features_list = []
-        
-        for idx, row in gdf_chunk.iterrows():
-            geom = row.geometry
-            if geom is not None and not geom.is_empty:
-                if geom.geom_type == 'Point':
-                    coords_list.append([geom.x, geom.y])
-                else:
-                    centroid = geom.centroid
-                    coords_list.append([centroid.x, centroid.y])
-                
-                feature_values = [row[col] for col in feature_cols]
-                
-                if not any(pd.isna(val) for val in feature_values):
-                    features_list.append(feature_values)
-                else:
-                    coords_list.pop()
-        
-        if len(coords_list) == 0 or len(features_list) == 0:
-            return np.array([]), np.array([])
-        
-        coords = np.array(coords_list)
-        features = np.array(features_list)
-        features = normalize_gdb_features(features, feature_cols)
-        
-        # In dữ liệu sau tiền xử lý chỉ ở chunk đầu tiên
-        if chunk_idx == 0:
-            print(f"\n=== CHUNK {chunk_idx}: DỮ LIỆU SAU TIỀN XỬ LÝ ===")
-            print(f"Số dòng còn lại sau lọc: {len(coords)}")
-            print(f"Các feature được sử dụng: {feature_cols}")
-            print(f"Shape của coords: {coords.shape}")
-            print(f"Shape của features: {features.shape}")
-            
-            print(f"\nDữ liệu đã được chuẩn hóa (tối đa 20 dòng):")
-            max_display = min(20, len(coords))
-            for i in range(max_display):
-                coord_str = f"coords=({coords[i][0]:.6f}, {coords[i][1]:.6f})"
-                feature_str = ", ".join([f"{feature_cols[j]}={features[i][j]:.4f}" for j in range(min(5, len(feature_cols)))])
-                print(f"Row {i}: {coord_str}, features=[{feature_str}...]")
-            
-            if len(coords) > 20:
-                print(f"... và {len(coords) - 20} dòng khác")
-            print("=" * 50)
-        
-        return coords, features
-        
-    except Exception as e:
-        print(f"Lỗi khi đọc chunk {chunk_idx}: {e}")
-        gc.collect()
-        return np.array([]), np.array([])
 
 
 def process_chunk_parallel(chunk_args):
