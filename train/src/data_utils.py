@@ -207,8 +207,11 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
             
             return coords, features
         except Exception as e:
-            print(f"Error reading geodatabase chunk {chunk_idx}: {e}")
+            print(f"Error reading fiona source: {e}")
             return np.array([]), np.array([])
+    except Exception as e:
+        print(f"Error reading geodatabase chunk {chunk_idx}: {e}")
+        return np.array([]), np.array([])
 
 
 def process_chunk_parallel(chunk_args):
