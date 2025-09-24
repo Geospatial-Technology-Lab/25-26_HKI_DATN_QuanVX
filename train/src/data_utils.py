@@ -10,7 +10,7 @@ from typing import Tuple
 import fiona
 import shapely.geometry as sg
 from ml_hyper_parameter import get_model_params
-from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS
+from feature_config import FEATURES, FEATURE_MIN_MAX, STUDY_AREA_BOUNDS, normalize_feature_names, get_feature_mapping_dict
 
 # Chunk size: 2 million points
 CHUNK_SIZE = 2_000_000
@@ -20,25 +20,30 @@ def validate_feature_compatibility(gdb_features: list) -> bool:
     Validate that GDB features are compatible with training features.
     Ensures all required features are present and in correct order.
     """
+    # Chuẩn hóa tên feature từ .gdb
+    normalized_features = normalize_feature_names(gdb_features)
+    
     # Check if all required features are present
-    missing_features = [f for f in FEATURES if f not in gdb_features]
+    missing_features = [f for f in FEATURES if f not in normalized_features]
     if missing_features:
         print(f"❌ Missing required features: {missing_features}")
         return False
     
     # Check for extra features
-    extra_features = [f for f in gdb_features if f not in FEATURES]
+    extra_features = [f for f in normalized_features if f not in FEATURES]
     if extra_features:
         print(f"⚠️ Extra features found (will be ignored): {extra_features}")
     
     # Check if core features are present (first few important ones)
     core_features = FEATURES[:5]  # First 5 features are considered core
-    missing_core = [f for f in core_features if f not in gdb_features]
+    missing_core = [f for f in core_features if f not in normalized_features]
     if missing_core:
         print(f"❌ Missing core features: {missing_core}")
         return False
     
     print("✅ Feature compatibility check passed")
+    print(f"📁 Original GDB features: {gdb_features[:10]}{'...' if len(gdb_features) > 10 else ''}")
+    print(f"📊 Normalized features: {normalized_features[:10]}{'...' if len(normalized_features) > 10 else ''}")
     return True
 
 def load_trained_model(model_type: str, optimization_method: str):
@@ -81,21 +86,35 @@ def normalize_gdb_features(features: np.ndarray, feature_names: list) -> np.ndar
     if len(features) == 0:
         return features
     
+    # Chuẩn hóa tên feature từ .gdb
+    normalized_feature_names = normalize_feature_names(feature_names)
+    
     # Validate feature order matches training
-    if feature_names != FEATURES:
+    if normalized_feature_names != FEATURES:
         print(f"⚠️ Feature order mismatch!")
         print(f"   Expected: {FEATURES}")
-        print(f"   Received: {feature_names}")
+        print(f"   Original GDB: {feature_names}")
+        print(f"   Normalized: {normalized_feature_names}")
+        
         # Try to reorder if all features are present
-        if set(feature_names) == set(FEATURES):
+        if set(normalized_feature_names) == set(FEATURES):
             print("   ⚠️ Features present but in different order. Reordering...")
-            # Create mapping from feature to index
+            # Create mapping from original feature to index
             feature_to_index = {feat: i for i, feat in enumerate(feature_names)}
             reordered_features = np.zeros_like(features)
+            
             for i, expected_feature in enumerate(FEATURES):
-                if expected_feature in feature_to_index:
-                    source_idx = feature_to_index[expected_feature]
+                # Tìm feature gốc trong .gdb tương ứng với expected_feature
+                original_feature = None
+                for orig_feat in feature_names:
+                    if normalize_feature_names([orig_feat])[0] == expected_feature:
+                        original_feature = orig_feat
+                        break
+                
+                if original_feature and original_feature in feature_to_index:
+                    source_idx = feature_to_index[original_feature]
                     reordered_features[:, i] = features[:, source_idx]
+                    
             features = reordered_features
             print("   ✅ Features reordered to match training order")
         else:
@@ -171,22 +190,25 @@ def load_chunk_clean(file_path: Path, layer_name: str, chunk_size: int, chunk_id
                             
                             coords_list.append(coords)
                             
-                            # Extract features in correct order
+                            # Extract features in correct order using mapping
                             feature_values = []
-                            for col in FEATURES:
-                                if col in props:
-                                    val = props[col]
+                            # Tạo mapping từ tên feature gốc sang target index
+                            feature_mapping = get_feature_mapping_dict(list(props.keys()))
+                            
+                            # Initialize feature array với 0
+                            feature_array = [0.0] * len(FEATURES)
+                            
+                            # Fill feature values theo mapping
+                            for gdb_feature, target_idx in feature_mapping.items():
+                                if gdb_feature in props:
+                                    val = props[gdb_feature]
                                     if val is not None and not pd.isna(val):
                                         try:
-                                            feature_values.append(float(val))
+                                            feature_array[target_idx] = float(val)
                                         except (ValueError, TypeError):
-                                            feature_values.append(0.0)
-                                    else:
-                                        feature_values.append(0.0)
-                                else:
-                                    feature_values.append(0.0)
+                                            feature_array[target_idx] = 0.0
                             
-                            features_list.append(feature_values)
+                            features_list.append(feature_array)
                     
                     except Exception as e:
                         if chunk_idx == 0:
