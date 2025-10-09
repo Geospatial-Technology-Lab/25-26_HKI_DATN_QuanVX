@@ -446,7 +446,6 @@ class PUMAOptimizer:
             pass
         
         # Vòng lặp tối ưu hóa
-        # Vòng lặp tối ưu hóa
         for generation in range(self.generations):
             old_best_fitness = current_best_fitness
             
