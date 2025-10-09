@@ -1,39 +1,27 @@
 import numpy as np
 import random
-import warnings
-import matplotlib.pyplot as plt
-import pandas as pd
-import joblib
-from datetime import datetime
 from sklearn.model_selection import train_test_split
-warnings.filterwarnings('ignore')
 
-from config import FLOOD_DATA_CONFIG
-from data_preprocessing import prepare_flood_data
-from evaluation_utils import evaluate_regression_model
+from config.model_params import RF_PARAM_RANGES, XGB_PARAM_RANGES, SVM_PARAM_RANGES, MLP_PARAM_RANGES
+from evaluation.evaluation_utils import evaluate_regression_model, load_data_from_csv
+from optimization.model_utils import generate_random_params, create_model
 
-# Thêm seed cố định để tái tạo kết quả
-RANDOM_SEED = FLOOD_DATA_CONFIG['random_state']
+RANDOM_SEED = 42
 
 class PUMAOptimizer:
     def __init__(self, X=None, y=None, model_type='regression', population_size=10, generations=100, random_state=None):
-        """Bộ tối ưu hóa PUMA tổng quát cho nhiều loại mô hình."""
         self.model_type = model_type
         self.population_size = population_size
         self.generations = generations
         self.random_state = random_state or RANDOM_SEED
         self.best_individual = None
-        self.best_score = -np.inf  # Luôn tối đa hóa fitness
+        self.best_score = -np.inf
         self.best_scores_history = []
-        self.pCR = 0.5  # Tỷ lệ lai ghép ban đầu
-        self.p = 0.1    # Tỷ lệ điều chỉnh pCR
-        
-        # Biến lưu mô hình tốt nhất
+        self.pCR = 0.5
+        self.p = 0.1
         self.best_model = None
-        self.iteration_results = []  # Lưu kết quả từng vòng lặp
-
-        # Experience Management System variables
-        self.UnSelected = [1, 1]  # [Exploration_count, Exploitation_count]
+        self.iteration_results = []
+        self.UnSelected = [1, 1]
         self.F3_Explore = 0
         self.F3_Exploit = 0
         self.Seq_Time_Explore = [1, 1, 1]
@@ -42,7 +30,7 @@ class PUMAOptimizer:
         self.Seq_Cost_Exploit = [1, 1, 1]
         self.Score_Explore = 0
         self.Score_Exploit = 0
-        self.PF = [0.5, 0.5, 0.3]  # Performance factors
+        self.PF = [0.5, 0.5, 0.3]
         self.PF_F3 = []
         self.Mega_Explor = 0.99
         self.Mega_Exploit = 0.99
@@ -50,129 +38,85 @@ class PUMAOptimizer:
         self.Initial_Best = None
         self.Costs_Explor = []
         self.Costs_Exploit = []
-        self.SelectFlag = 0
         self.experienced_phase_started = False
         
-        # Thiết lập random seed
         random.seed(self.random_state)
         np.random.seed(self.random_state)
         
-        # Chuẩn bị dữ liệu
         if X is not None and y is not None:
-            # Sử dụng dữ liệu được cung cấp
             X_prepared, y_prepared = X, y
             self.feature_columns = [f'feature_{i}' for i in range(X.shape[1])]
         else:
-            # Sử dụng hàm chuẩn bị dữ liệu từ data_preprocessing
-            X_prepared, y_prepared, self.feature_columns = prepare_flood_data(
-                config=None, shuffle_data=True, debug=False
-            )
+            # Sử dụng load_data_from_csv từ evaluation_utils
+            # Cần truyền csv_file_path từ bên ngoài
+            raise ValueError("Cần cung cấp X và y hoặc sử dụng load_data_from_csv từ bên ngoài")
 
-        # Chia dữ liệu
         stratify = y_prepared if model_type == 'classification' else None
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             X_prepared, y_prepared, 
-            test_size=FLOOD_DATA_CONFIG['test_size'], 
+            test_size=0.2,
             stratify=stratify, 
             random_state=self.random_state
         )
 
-        # Kiểm tra và chuẩn hóa từng cột riêng biệt
-        # Khởi tạo mảng scaled với dữ liệu gốc
         self.X_train_scaled = self.X_train.copy()
         self.X_test_scaled = self.X_test.copy()
         
-        # Duyệt qua từng cột để kiểm tra và chuẩn hóa nếu cần
-        for col in range(self.X_train.shape[1]):
-            # Tính statistics cho cột hiện tại
-            col_min = np.min(self.X_train[:, col])
-            col_max = np.max(self.X_train[:, col])
-            col_range = col_max - col_min
-            col_mean = np.mean(self.X_train[:, col])
-            col_std = np.std(self.X_train[:, col])
-            
-            # Kiểm tra xem cột có cần chuẩn hóa không
-            # Điều kiện: có range lớn hoặc mean/std bất thường
-            need_scaling = (col_range > 10) or (abs(col_mean) > 10) or (col_std > 10)
-            
-            if need_scaling:
-                # Thực hiện chuẩn hóa chỉ cho cột này
-                if col_range != 0:
-                    self.X_train_scaled[:, col] = (self.X_train[:, col] - col_min) / col_range
-                    self.X_test_scaled[:, col] = (self.X_test[:, col] - col_min) / col_range
-                
-                print(f"Đã chuẩn hóa cột {self.feature_columns[col]} với range={col_range:.2f}, "
-                      f"mean={col_mean:.2f}, std={col_std:.2f}")
-        
-        # Sẽ được thiết lập bởi model cụ thể
         self.param_ranges = {}
-        self.evaluate_function = None
     
     def set_param_ranges(self, param_ranges):
-        """Thiết lập phạm vi tham số cho mô hình cụ thể"""
         self.param_ranges = param_ranges
     
-    def set_evaluate_function(self, evaluate_function):
-        """Thiết lập hàm đánh giá cho mô hình cụ thể"""
-        self.evaluate_function = evaluate_function
+    def set_param_ranges_by_model_type(self, model_type):
+        """Tự động set param ranges dựa trên model type"""
+        model_type = model_type.lower()
+        if 'rf' in model_type or 'random_forest' in model_type:
+            self.param_ranges = RF_PARAM_RANGES
+        elif 'xgb' in model_type or 'xgboost' in model_type:
+            self.param_ranges = XGB_PARAM_RANGES
+        elif 'svm' in model_type or 'support_vector' in model_type:
+            self.param_ranges = SVM_PARAM_RANGES
+        elif 'mlp' in model_type or 'neural' in model_type:
+            self.param_ranges = MLP_PARAM_RANGES
+        else:
+            raise ValueError(f"Model type '{model_type}' không được hỗ trợ")
+    
+    def load_data_from_file(self, csv_file_path, test_size=0.2):
+        """Tiện ích để load data từ CSV file"""
+        X_train, X_test, y_train, y_test = load_data_from_csv(csv_file_path, test_size, self.random_state)
+        self.X_train = X_train
+        self.X_test = X_test  
+        self.y_train = y_train
+        self.y_test = y_test
+        self.feature_columns = [f'feature_{i}' for i in range(X_train.shape[1])]
+        
+        self.X_train_scaled = self.X_train.copy()
+        self.X_test_scaled = self.X_test.copy()
 
     def create_individual(self):
-        """Tạo một cá thể ngẫu nhiên với các tham số trong phạm vi cho phép"""
-        individual = {}
-        
-        for param, range_info in self.param_ranges.items():
-            if range_info['type'] == 'int':
-                individual[param] = random.randint(range_info['min'], range_info['max'])
-            elif range_info['type'] == 'float':
-                individual[param] = random.uniform(range_info['min'], range_info['max'])
-            elif range_info['type'] == 'log_uniform':
-                log_min = np.log10(range_info['min'])
-                log_max = np.log10(range_info['max'])
-                individual[param] = 10 ** random.uniform(log_min, log_max)
-            elif range_info['type'] == 'choice':
-                individual[param] = random.choice(range_info['options'])
-        
-        return individual
+        return generate_random_params(self.param_ranges)
 
     def create_model_from_params(self, individual):
-        """Tạo model từ dictionary tham số"""
-        from sklearn.ensemble import RandomForestRegressor
-        from sklearn.svm import SVR
-        from sklearn.neural_network import MLPRegressor
-        try:
-            from xgboost import XGBRegressor
-        except ImportError:
-            XGBRegressor = None
-        
-        # Xác định loại model từ tham số
+        # Xác định model type dựa trên params
         if 'n_estimators' in individual:
-            if 'learning_rate' in individual and XGBRegressor is not None:
-                # XGBoost
-                return XGBRegressor(**individual, random_state=self.random_state)
-            else:
-                # Random Forest
-                return RandomForestRegressor(**individual, random_state=self.random_state)
+            model_type = 'xgb' if 'learning_rate' in individual else 'rf'
         elif 'C' in individual and 'gamma' in individual:
-            # SVM
-            return SVR(**individual)
+            model_type = 'svm'
         elif 'hidden_layer_sizes' in individual:
-            # MLP
-            return MLPRegressor(**individual, random_state=self.random_state)
+            model_type = 'mlp'
         else:
-            # Default fallback
             from sklearn.linear_model import LinearRegression
             return LinearRegression()
+        
+        return create_model(model_type, individual, self.random_state)
     
     def calculate_metrics(self, individual):
-        """Tính toán các metric chi tiết cho regression"""
         if self.model_type != 'regression':
             return None, None, None
         
         try:
-            # Tạo model từ individual parameters
             model = self.create_model_from_params(individual)
             
-            # Sử dụng evaluate_regression_model từ evaluation_utils
             detailed_metrics = evaluate_regression_model(
                 model, self.X_train_scaled, self.X_test_scaled, 
                 self.y_train, self.y_test, 
@@ -184,28 +128,7 @@ class PUMAOptimizer:
         except Exception as e:
             return 0.0, float('inf'), float('inf')
     
-    def get_detailed_metrics(self, individual):
-        """Lấy metrics chi tiết dưới dạng dictionary"""
-        try:
-            model = self.create_model_from_params(individual)
-            detailed_metrics = evaluate_regression_model(
-                model, self.X_train_scaled, self.X_test_scaled, 
-                self.y_train, self.y_test, 
-                clip_predictions=True, return_detailed=True
-            )
-            return detailed_metrics
-        except Exception as e:
-            return {'fitness': -np.inf, 'r2': 0, 'mae': np.inf, 'rmse': np.inf, 'fitness_score': -np.inf}
-    
-    def evaluate_individual(self, individual):
-        """Đánh giá fitness của một cá thể"""
-        if self.evaluate_function is None:
-            raise ValueError("Chưa thiết lập hàm đánh giá! Sử dụng set_evaluate_function()")
-        return self.evaluate_function(individual, self.X_train_scaled, self.X_test_scaled, 
-                                    self.y_train, self.y_test)
-    
     def clip_individual(self, individual):
-        """Đảm bảo các tham số nằm trong phạm vi cho phép"""
         for param, range_info in self.param_ranges.items():
             if range_info['type'] in ['int', 'float']:
                 individual[param] = max(range_info['min'], 
@@ -218,10 +141,19 @@ class PUMAOptimizer:
                     individual[param] = random.choice(range_info['options'])
         return individual
     
+    def _evaluate_individual(self, individual):
+        """Evaluate fitness của một cá thể"""
+        try:
+            model = self.create_model_from_params(individual)
+            return evaluate_regression_model(
+                model, self.X_train_scaled, self.X_test_scaled,
+                self.y_train, self.y_test, clip_predictions=True, return_detailed=False
+            )
+        except Exception:
+            return -np.inf
+    
     def exploration_phase(self, population, fitness_values):
-        """Giai đoạn khám phá PUMA"""
-        # Sắp xếp population theo fitness (tối đa hóa)
-        sorted_indices = np.argsort(fitness_values)[::-1]  # Descending order
+        sorted_indices = np.argsort(fitness_values)[::-1]
         population = [population[i] for i in sorted_indices]
         fitness_values = [fitness_values[i] for i in sorted_indices]
         
@@ -247,7 +179,6 @@ class PUMAOptimizer:
             # G coefficient
             G = 2 * random.random() - 1
             
-            # Tạo individual mới
             new_individual = {}
             
             # Chọn j0 - tham số bắt buộc phải thay đổi
@@ -292,7 +223,7 @@ class PUMAOptimizer:
             new_individual = self.clip_individual(new_individual)
             
             # Đánh giá fitness
-            new_fitness_val = self.evaluate_individual(new_individual)
+            new_fitness_val = self._evaluate_individual(new_individual)
             
             # So sánh và cập nhật (tối đa hóa)
             if new_fitness_val > fitness_values[i]:
@@ -307,7 +238,6 @@ class PUMAOptimizer:
         return new_population, new_fitness
     
     def exploitation_phase(self, population, fitness_values):
-        """Giai đoạn khai thác PUMA theo đúng paper"""
         Q = 0.67
         Beta = 2
         
@@ -388,7 +318,7 @@ class PUMAOptimizer:
             # Clip parameters
             new_individual = self.clip_individual(new_individual)
             NewSol[i]['X'] = new_individual
-            NewSol[i]['Cost'] = self.evaluate_individual(new_individual)
+            NewSol[i]['Cost'] = self._evaluate_individual(new_individual)
             
             # Cập nhật nếu tốt hơn (tối đa hóa) 
             if NewSol[i]['Cost'] > Sol[i]['Cost']:
@@ -399,38 +329,6 @@ class PUMAOptimizer:
         new_fitness = [s['Cost'] for s in Sol]
         
         return new_population, new_fitness
-    
-    def save_results_to_csv(self, filename=None):
-        """Lưu kết quả từng vòng lặp ra file CSV"""
-        if not self.iteration_results:
-            print("Không có dữ liệu để lưu!")
-            return
-        
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"puma_optimization_results_{timestamp}.csv"
-        
-        df = pd.DataFrame(self.iteration_results)
-        df.to_csv(filename, index=False)
-        print(f"Kết quả đã được lưu vào: {filename}")
-        
-        return filename
-    
-    def save_best_model(self, filename=None):
-        """Lưu mô hình tốt nhất"""
-        if self.best_model is None:
-            print("Chưa có mô hình tốt nhất để lưu!")
-            return
-        
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"puma_best_model_{timestamp}.joblib"  # Đổi extension
-        
-        # Sử dụng joblib thay vì pickle
-        joblib.dump(self.best_model, filename)
-        print(f"Mô hình tốt nhất đã được lưu vào: {filename}")
-        
-        return filename
     
     def calculate_experience_scores(self, iteration):
         """Tính toán scores cho Experience Management System"""
@@ -475,7 +373,6 @@ class PUMAOptimizer:
                                 lmn_Exploit * min_PF_F3 * self.F3_Exploit)
             
     def update_experience_data(self, iteration, phase_type, old_best_fitness, new_best_fitness):
-        """Cập nhật dữ liệu kinh nghiệm sau mỗi phase"""
         
         cost_improvement = abs(old_best_fitness - new_best_fitness)
         
@@ -523,14 +420,14 @@ class PUMAOptimizer:
             self.Seq_Time_Explore[0] = self.UnSelected[0]
             self.Seq_Time_Exploit[0] = self.UnSelected[1]
     
-    def optimize(self, verbose=True, save_csv=True, save_model=True):
+    def optimize(self, verbose=True):
         """Chạy quá trình tối ưu hóa PUMA"""
-        if self.evaluate_function is None:
-            raise ValueError("Chưa thiết lập hàm đánh giá! Sử dụng set_evaluate_function()")
+        if not self.param_ranges:
+            raise ValueError("Chưa thiết lập param ranges! Sử dụng set_param_ranges hoặc set_param_ranges_by_model_type")
         
         # Khởi tạo quần thể
         population = [self.create_individual() for _ in range(self.population_size)]
-        fitness_values = [self.evaluate_individual(ind) for ind in population]
+        fitness_values = [self._evaluate_individual(ind) for ind in population]
         
         # Tìm nghiệm tốt nhất ban đầu
         best_idx = np.argmax(fitness_values)
@@ -543,12 +440,10 @@ class PUMAOptimizer:
             self.best_model = self.create_model_from_params(best_individual)
             self.best_model.fit(self.X_train_scaled, self.y_train)
         except Exception as e:
-            print(f"Lỗi khi tạo mô hình ban đầu: {e}")
+            pass
         
         if verbose:
-            print(f"\nTiến trình tối ưu hóa PUMA cho {self.model_type}:")
-            print("Gen | Fitness     | R²        | MAE       | RMSE")
-            print("-" * 55)
+            pass
         
         # Vòng lặp tối ưu hóa
         # Vòng lặp tối ưu hóa
@@ -613,7 +508,7 @@ class PUMAOptimizer:
                     self.best_model = self.create_model_from_params(best_individual)
                     self.best_model.fit(self.X_train_scaled, self.y_train)
                 except Exception as e:
-                    print(f"Lỗi khi cập nhật mô hình tốt nhất: {e}")
+                    pass
                 
             else:
                 # Experienced Phase: chọn phase dựa trên scores
@@ -643,7 +538,7 @@ class PUMAOptimizer:
                         self.best_model = self.create_model_from_params(best_individual)
                         self.best_model.fit(self.X_train_scaled, self.y_train)
                     except Exception as e:
-                        print(f"Lỗi khi cập nhật mô hình tốt nhất: {e}")
+                        pass
                 
                 # Tính lại experience scores cho iteration tiếp theo
                 self.calculate_experience_scores(generation + 1)
@@ -669,55 +564,19 @@ class PUMAOptimizer:
                 
                 self.iteration_results.append(iteration_result)
                 
-                if verbose and generation % 1 == 0:  # In mỗi 1 generation
-                    print(f"{generation+1:3d} | {current_best_fitness:10.6f} | {r2:8.6f} | {mae:8.4f} | {rmse:8.4f}")
+                if verbose and generation % 1 == 0:
+                    pass
         
         # In kết quả cuối cùng
         if verbose:
-            final_r2, final_mae, final_rmse = self.calculate_metrics(best_individual)
-            print(f"\nKết quả cuối cùng:")
-            print(f"{self.generations:3d} | {best_fitness:10.6f} | {final_r2:8.6f} | {final_mae:8.4f} | {final_rmse:8.4f}")
+            pass
         
         # Lưu trữ kết quả cuối cùng
         self.best_individual = best_individual
         self.best_score = best_fitness
         
-        # Lưu file nếu được yêu cầu
-        csv_filename = None
-        model_filename = None
-        
-        if save_csv:
-            csv_filename = self.save_results_to_csv()
-        
-        if save_model:
-            model_filename = self.save_best_model()
-        
         return {
             'best_params': self.best_individual, 
             'best_score': self.best_score,
-            'best_model': self.best_model,
-            'csv_file': csv_filename,
-            'model_file': model_filename
+            'best_model': self.best_model
         }
-    
-    def plot_optimization_progress(self, title="Tiến trình tối ưu hóa PUMA"):
-        """Vẽ biểu đồ tiến trình tối ưu hóa"""
-        if not self.best_scores_history:
-            print("Chưa có dữ liệu tối ưu hóa để vẽ biểu đồ!")
-            return
-            
-        plt.figure(figsize=(10, 6))
-        plt.plot(self.best_scores_history, 'b-', linewidth=2)
-        plt.title(title, fontsize=14)
-        plt.xlabel('Thế hệ', fontsize=12)
-        plt.ylabel('Điểm số tốt nhất', fontsize=12)
-        plt.grid(True, alpha=0.3)
-        plt.show()
-    
-    def get_results_dataframe(self):
-        """Trả về DataFrame chứa kết quả tối ưu hóa"""
-        if not self.iteration_results:
-            print("Chưa có dữ liệu tối ưu hóa!")
-            return None
-        
-        return pd.DataFrame(self.iteration_results)

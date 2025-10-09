@@ -78,7 +78,6 @@ MODEL_PARAM_RANGES = {
 }
 
 def get_param_ranges(model_name):
-    """Lấy phạm vi tham số cho mô hình cụ thể."""
     model_name = model_name.lower()
     if model_name not in MODEL_PARAM_RANGES:
         supported_models = list(set(MODEL_PARAM_RANGES.keys()))
@@ -88,22 +87,8 @@ def get_param_ranges(model_name):
     return MODEL_PARAM_RANGES[model_name]
 
 def get_all_supported_models():
-    """Lấy danh sách tất cả các mô hình được hỗ trợ."""
     return list(set(MODEL_PARAM_RANGES.keys()))
-
-# Cấu hình chung cho các thuật toán tối ưu hóa
-OPTIMIZATION_CONFIG = {
-    'population_size': 10,
-    'generations': 100,
-    'n_particles': 10,      # Cho PSO
-    'n_iterations': 100,    # Cho PSO
-    'random_seed': 42,
-    'verbose': True
-}
-
-# Export các cấu hình (đã loại bỏ các config trùng lặp)
 __all__ = [
     'RF_PARAM_RANGES', 'XGB_PARAM_RANGES', 'SVM_PARAM_RANGES', 'MLP_PARAM_RANGES',
-    'MODEL_PARAM_RANGES', 'get_param_ranges', 'get_all_supported_models',
-    'OPTIMIZATION_CONFIG'
+    'MODEL_PARAM_RANGES', 'get_param_ranges', 'get_all_supported_models'
 ]
