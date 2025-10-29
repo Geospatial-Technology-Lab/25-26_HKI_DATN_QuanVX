@@ -22,7 +22,7 @@ def evaluate_regression_model(model, X_train: np.ndarray, X_test: np.ndarray,
     else:
         return float(fitness)
 
-def load_data_from_csv(csv_file_path: str, test_size: float = 0.2, random_state: int = 42) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_data_from_csv(csv_file_path: str, test_size: float = 0.3, random_state: int = 42) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data = pd.read_csv(csv_file_path)
     y = data.iloc[:, 0].values
     X = data.iloc[:, 1:14].values

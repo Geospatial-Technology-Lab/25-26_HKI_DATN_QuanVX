@@ -2,7 +2,7 @@ import numpy as np
 import random
 from sklearn.model_selection import train_test_split
 
-from config.model_params import RF_PARAM_RANGES, XGB_PARAM_RANGES, SVM_PARAM_RANGES, MLP_PARAM_RANGES
+from config.model_params import RF_PARAM_RANGES, XGB_PARAM_RANGES, SVM_PARAM_RANGES
 from evaluation.evaluation_utils import evaluate_regression_model, load_data_from_csv
 from optimization.model_utils import generate_random_params, create_model
 
@@ -76,10 +76,8 @@ class PUMAOptimizer:
             self.param_ranges = XGB_PARAM_RANGES
         elif 'svm' in model_type or 'support_vector' in model_type:
             self.param_ranges = SVM_PARAM_RANGES
-        elif 'mlp' in model_type or 'neural' in model_type:
-            self.param_ranges = MLP_PARAM_RANGES
         else:
-            raise ValueError(f"Model type '{model_type}' không được hỗ trợ")
+            raise ValueError(f"Model type '{model_type}' không được hỗ trợ. Chỉ hỗ trợ: rf, xgb, svm")
     
     def load_data_from_file(self, csv_file_path, test_size=0.2):
         """Tiện ích để load data từ CSV file"""
@@ -97,13 +95,10 @@ class PUMAOptimizer:
         return generate_random_params(self.param_ranges)
 
     def create_model_from_params(self, individual):
-        # Xác định model type dựa trên params
         if 'n_estimators' in individual:
             model_type = 'xgb' if 'learning_rate' in individual else 'rf'
         elif 'C' in individual and 'gamma' in individual:
             model_type = 'svm'
-        elif 'hidden_layer_sizes' in individual:
-            model_type = 'mlp'
         else:
             from sklearn.linear_model import LinearRegression
             return LinearRegression()
@@ -420,10 +415,14 @@ class PUMAOptimizer:
             self.Seq_Time_Explore[0] = self.UnSelected[0]
             self.Seq_Time_Exploit[0] = self.UnSelected[1]
     
-    def optimize(self, verbose=True):
+    def optimize(self, verbose=False):
         """Chạy quá trình tối ưu hóa PUMA"""
         if not self.param_ranges:
             raise ValueError("Chưa thiết lập param ranges! Sử dụng set_param_ranges hoặc set_param_ranges_by_model_type")
+        
+        if verbose:
+            print(f"{'Vong':>5} {'Fitness':>12} {'R2':>10} {'MAE':>10} {'RMSE':>10}")
+            print("-" * 52)
         
         # Khởi tạo quần thể
         population = [self.create_individual() for _ in range(self.population_size)]
@@ -440,9 +439,6 @@ class PUMAOptimizer:
             self.best_model = self.create_model_from_params(best_individual)
             self.best_model.fit(self.X_train_scaled, self.y_train)
         except Exception as e:
-            pass
-        
-        if verbose:
             pass
         
         # Vòng lặp tối ưu hóa
@@ -563,12 +559,8 @@ class PUMAOptimizer:
                 
                 self.iteration_results.append(iteration_result)
                 
-                if verbose and generation % 1 == 0:
-                    pass
-        
-        # In kết quả cuối cùng
-        if verbose:
-            pass
+                if verbose:
+                    print(f"{generation+1:5d} {current_best_fitness:12.6f} {r2:10.6f} {mae:10.6f} {rmse:10.6f}")
         
         # Lưu trữ kết quả cuối cùng
         self.best_individual = best_individual

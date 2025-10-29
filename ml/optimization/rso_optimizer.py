@@ -50,7 +50,11 @@ class RandomizedSearch:
         joblib.dump(self.best_model, filename)
         return filename
     
-    def search(self, n_iter=100):
+    def search(self, n_iter=100, verbose=False):
+        if verbose:
+            print(f"{'Vong':>5} {'Fitness':>12} {'R2':>10} {'MAE':>10} {'RMSE':>10}")
+            print("-" * 52)
+        
         for i in range(n_iter):
             params = self.sample_params()
             result = self._evaluate_params(params)
@@ -64,6 +68,10 @@ class RandomizedSearch:
                 self.best_params = params.copy()
                 self.best_model = self._create_model(params)
                 self.best_model.fit(self.X, self.y)
+            
+            if verbose:
+                print(f"{i+1:5d} {fitness:12.6f} {result['r2']:10.6f} {result['mae']:10.6f} {result['rmse']:10.6f}")
+        
         return {'best_params': self.best_params, 'best_score': self.best_score, 'best_model': self.best_model}
 
 def quick_randomized_search(model_name, X, y, n_iter=100, random_state=42):

@@ -101,7 +101,11 @@ class PSOOptimizer:
         joblib.dump(self.best_model, filename)
         return filename
     
-    def optimize(self):
+    def optimize(self, verbose=False):
+        if verbose:
+            print(f"{'Vong':>5} {'Fitness':>12} {'R2':>10} {'MAE':>10} {'RMSE':>10}")
+            print("-" * 52)
+        
         self._initialize_swarm()
         for iteration in range(self.n_iterations):
             for particle in self.particles:
@@ -119,6 +123,10 @@ class PSOOptimizer:
             for param_name, value in self.global_best_position.items():
                 iteration_result[f'best_{param_name}'] = value
             self.iteration_results.append(iteration_result)
+            
+            if verbose:
+                print(f"{iteration+1:5d} {metrics['fitness']:12.6f} {metrics['r2']:10.6f} {metrics['mae']:10.6f} {metrics['rmse']:10.6f}")
+            
             self._update_particles()
             self.w = max(self.w_min, self.w - (self.w - self.w_min) / self.n_iterations)
         return {'best_params': self.global_best_position, 'best_score': self.global_best_score, 'best_model': self.best_model}
@@ -147,14 +155,6 @@ class SVMPSOOptimizer(PSOOptimizer):
     def _create_model(self, params):
         return create_model('svm', params, self.random_state)
 
-class MLPPSOOptimizer(PSOOptimizer):
-    def __init__(self, X, y, n_particles=20, n_iterations=50, random_state=42):
-        super().__init__(X, y, n_particles, n_iterations, random_state)
-        self.set_param_ranges(get_param_ranges('mlp'))
-    
-    def _create_model(self, params):
-        return create_model('mlp', params, self.random_state)
-
 def create_optimizer(model_name, X, y, n_particles=20, n_iterations=50, random_state=42):
     model_name = model_name.lower()
     if model_name in ['rf', 'random_forest']:
@@ -163,8 +163,8 @@ def create_optimizer(model_name, X, y, n_particles=20, n_iterations=50, random_s
         return XGBoostPSOOptimizer(X, y, n_particles, n_iterations, random_state)
     elif model_name in ['svm', 'support_vector_machine']:
         return SVMPSOOptimizer(X, y, n_particles, n_iterations, random_state)
-    elif model_name in ['mlp', 'neural_network', 'multi_layer_perceptron']:
-        return MLPPSOOptimizer(X, y, n_particles, n_iterations, random_state)
+    else:
+        raise ValueError(f"Model '{model_name}' không được hỗ trợ. Chỉ hỗ trợ: rf, xgb, svm")
 
 def quick_optimize(model_name, X, y, n_particles=20, n_iterations=50, random_state=42):
     optimizer = create_optimizer(model_name, X, y, n_particles, n_iterations, random_state)
