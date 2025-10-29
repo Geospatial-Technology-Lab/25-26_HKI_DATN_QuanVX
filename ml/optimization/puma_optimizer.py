@@ -1,5 +1,8 @@
 import numpy as np
 import random
+import pandas as pd
+import joblib
+from datetime import datetime
 from sklearn.model_selection import train_test_split
 
 from config.model_params import RF_PARAM_RANGES, XGB_PARAM_RANGES, SVM_PARAM_RANGES
@@ -135,6 +138,23 @@ class PUMAOptimizer:
                 if individual[param] not in range_info['options']:
                     individual[param] = random.choice(range_info['options'])
         return individual
+    
+    def save_results_to_csv(self, filename=None):
+        """Lưu kết quả tối ưu hóa ra file CSV"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"puma_optimization_results_{timestamp}.csv"
+        df = pd.DataFrame(self.iteration_results)
+        df.to_csv(filename, index=False)
+        return filename
+    
+    def save_best_model(self, filename=None):
+        """Lưu mô hình tốt nhất ra file"""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"puma_best_model_{timestamp}.joblib"
+        joblib.dump(self.best_model, filename)
+        return filename
     
     def _evaluate_individual(self, individual):
         """Evaluate fitness của một cá thể"""

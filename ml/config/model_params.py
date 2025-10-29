@@ -1,25 +1,26 @@
 RF_PARAM_RANGES = {
-    'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
-    'min_samples_leaf': {'type': 'int', 'min': 1, 'max': 20},
-    'max_features': {'type': 'choice', 'options': ['sqrt', 'log2', None]},
-    'bootstrap': {'type': 'choice', 'options': [True, False]}
+    'numberOfTrees': {'type': 'int', 'min': 50, 'max': 1000},
+    'variablesPerSplit': {'type': 'int', 'min': 1, 'max': 13},
+    'minLeafPopulation': {'type': 'int', 'min': 1, 'max': 20},
+    'bagFraction': {'type': 'float', 'min': 0.4, 'max': 1.0},
+    'maxNodes': {'type': 'int', 'min': 50, 'max': 20000}
 }
 
 XGB_PARAM_RANGES = {
-    'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
-    'learning_rate': {'type': 'float', 'min': 0.01, 'max': 0.3},
-    'subsample': {'type': 'float', 'min': 0.6, 'max': 1.0},
-    'colsample_bytree': {'type': 'float', 'min': 0.6, 'max': 1.0},
-    'reg_alpha': {'type': 'float', 'min': 0.0, 'max': 1.0},
-    'reg_lambda': {'type': 'float', 'min': 0.0, 'max': 1.0}
+    'numberOfTrees': {'type': 'int', 'min': 100, 'max': 1500},
+    'shrinkage': {'type': 'float', 'min': 0.001, 'max': 0.5},
+    'samplingRate': {'type': 'float', 'min': 0.5, 'max': 1.0},
+    'maxNodes': {'type': 'int', 'min': 50, 'max': 20000},
+    'loss': {'type': 'choice', 'options': ['LeastAbsoluteDeviation', 'LeastSquares', 'Huber']}
 }
 
 SVM_PARAM_RANGES = {
-    'C': {'type': 'log_uniform', 'min': 0.001, 'max': 1000},
-    'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 10},
-    'kernel': {'type': 'choice', 'options': ['linear', 'poly', 'rbf', 'sigmoid']},
+    'cost': {'type': 'log_uniform', 'min': 0.01, 'max': 200},
+    'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 2.0},
+    'epsilon': {'type': 'float', 'min': 0.001, 'max': 0.5},
+    'kernelType': {'type': 'choice', 'options': ['RBF', 'POLY', 'LINEAR']},
     'degree': {'type': 'int', 'min': 2, 'max': 5},
-    'coef0': {'type': 'float', 'min': 0.0, 'max': 10.0}
+    'coef0': {'type': 'float', 'min': 0.0, 'max': 20.0}
 }
 
 MODEL_PARAM_RANGES = {
