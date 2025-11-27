@@ -1,26 +1,22 @@
 RF_PARAM_RANGES = {
-    'numberOfTrees': {'type': 'int', 'min': 50, 'max': 1000},
-    'variablesPerSplit': {'type': 'int', 'min': 1, 'max': 13},
-    'minLeafPopulation': {'type': 'int', 'min': 1, 'max': 20},
-    'bagFraction': {'type': 'float', 'min': 0.4, 'max': 1.0},
-    'maxNodes': {'type': 'int', 'min': 50, 'max': 20000}
+    'n_estimators': {'type': 'int', 'min': 50, 'max': 1000},
+    'max_features': {'type': 'int', 'min': 1, 'max': 13},
+    'min_samples_leaf': {'type': 'int', 'min': 1, 'max': 20},
+    'max_leaf_nodes': {'type': 'int', 'min': 50, 'max': 20000}
 }
 
 XGB_PARAM_RANGES = {
-    'numberOfTrees': {'type': 'int', 'min': 100, 'max': 1500},
-    'shrinkage': {'type': 'float', 'min': 0.001, 'max': 0.5},
-    'samplingRate': {'type': 'float', 'min': 0.5, 'max': 1.0},
-    'maxNodes': {'type': 'int', 'min': 50, 'max': 20000},
-    'loss': {'type': 'choice', 'options': ['LeastAbsoluteDeviation', 'LeastSquares', 'Huber']}
+    'n_estimators': {'type': 'int', 'min': 100, 'max': 1500},
+    'learning_rate': {'type': 'float', 'min': 0.001, 'max': 0.5},
+    'subsample': {'type': 'float', 'min': 0.5, 'max': 1.0},
+    'max_leaves': {'type': 'int', 'min': 50, 'max': 20000}
 }
 
 SVM_PARAM_RANGES = {
-    'cost': {'type': 'log_uniform', 'min': 0.01, 'max': 200},
+    'C': {'type': 'log_uniform', 'min': 0.01, 'max': 200},
     'gamma': {'type': 'log_uniform', 'min': 0.0001, 'max': 2.0},
     'epsilon': {'type': 'float', 'min': 0.001, 'max': 0.5},
-    'kernelType': {'type': 'choice', 'options': ['RBF', 'POLY', 'LINEAR']},
-    'degree': {'type': 'int', 'min': 2, 'max': 5},
-    'coef0': {'type': 'float', 'min': 0.0, 'max': 20.0}
+    'kernel': {'type': 'choice', 'options': ['rbf', 'poly', 'linear']}
 }
 
 MODEL_PARAM_RANGES = {

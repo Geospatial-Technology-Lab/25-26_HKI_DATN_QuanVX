@@ -1,28 +1,25 @@
 import numpy as np
 import random
 import pandas as pd
-import joblib
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 
 from config.model_params import RF_PARAM_RANGES, XGB_PARAM_RANGES, SVM_PARAM_RANGES
-from evaluation.evaluation_utils import evaluate_regression_model, load_data_from_csv
+from evaluation.evaluation_utils import evaluate_regression_model
 from optimization.model_utils import generate_random_params, create_model
 
-RANDOM_SEED = 42
 
 class PUMAOptimizer:
-    def __init__(self, X=None, y=None, model_type='regression', population_size=10, generations=100, random_state=None):
+    def __init__(self, X=None, y=None, model_type='regression', population_size=10, generations=50, random_state=42):
         self.model_type = model_type
         self.population_size = population_size
         self.generations = generations
-        self.random_state = random_state or RANDOM_SEED
+        self.random_state = random_state
         self.best_individual = None
         self.best_score = -np.inf
         self.best_scores_history = []
         self.pCR = 0.5
         self.p = 0.1
-        self.best_model = None
         self.iteration_results = []
         self.UnSelected = [1, 1]
         self.F3_Explore = 0
@@ -50,14 +47,12 @@ class PUMAOptimizer:
             X_prepared, y_prepared = X, y
             self.feature_columns = [f'feature_{i}' for i in range(X.shape[1])]
         else:
-            # Sử dụng load_data_from_csv từ evaluation_utils
-            # Cần truyền csv_file_path từ bên ngoài
-            raise ValueError("Cần cung cấp X và y hoặc sử dụng load_data_from_csv từ bên ngoài")
+            raise ValueError("Cần cung cấp X và y")
 
         stratify = y_prepared if model_type == 'classification' else None
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
             X_prepared, y_prepared, 
-            test_size=0.2,
+            test_size=0.3,
             stratify=stratify, 
             random_state=self.random_state
         )
@@ -67,8 +62,6 @@ class PUMAOptimizer:
         
         self.param_ranges = {}
     
-    def set_param_ranges(self, param_ranges):
-        self.param_ranges = param_ranges
     
     def set_param_ranges_by_model_type(self, model_type):
         """Tự động set param ranges dựa trên model type"""
@@ -82,18 +75,6 @@ class PUMAOptimizer:
         else:
             raise ValueError(f"Model type '{model_type}' không được hỗ trợ. Chỉ hỗ trợ: rf, xgb, svm")
     
-    def load_data_from_file(self, csv_file_path, test_size=0.2):
-        """Tiện ích để load data từ CSV file"""
-        X_train, X_test, y_train, y_test = load_data_from_csv(csv_file_path, test_size, self.random_state)
-        self.X_train = X_train
-        self.X_test = X_test  
-        self.y_train = y_train
-        self.y_test = y_test
-        self.feature_columns = [f'feature_{i}' for i in range(X_train.shape[1])]
-        
-        self.X_train_scaled = self.X_train.copy()
-        self.X_test_scaled = self.X_test.copy()
-
     def create_individual(self):
         return generate_random_params(self.param_ranges)
 
@@ -146,14 +127,6 @@ class PUMAOptimizer:
             filename = f"puma_optimization_results_{timestamp}.csv"
         df = pd.DataFrame(self.iteration_results)
         df.to_csv(filename, index=False)
-        return filename
-    
-    def save_best_model(self, filename=None):
-        """Lưu mô hình tốt nhất ra file"""
-        if filename is None:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"puma_best_model_{timestamp}.joblib"
-        joblib.dump(self.best_model, filename)
         return filename
     
     def _evaluate_individual(self, individual):
@@ -454,13 +427,6 @@ class PUMAOptimizer:
         best_individual = population[best_idx].copy()
         best_fitness = current_best_fitness
         
-        # Cập nhật mô hình tốt nhất ban đầu
-        try:
-            self.best_model = self.create_model_from_params(best_individual)
-            self.best_model.fit(self.X_train_scaled, self.y_train)
-        except Exception as e:
-            pass
-        
         # Vòng lặp tối ưu hóa
         for generation in range(self.generations):
             old_best_fitness = current_best_fitness
@@ -517,13 +483,6 @@ class PUMAOptimizer:
                 # Cập nhật best_fitness nếu tốt hơn
                 if current_best_fitness > best_fitness:
                     best_fitness = current_best_fitness
-                    
-                # Cập nhật mô hình tốt nhất
-                try:
-                    self.best_model = self.create_model_from_params(best_individual)
-                    self.best_model.fit(self.X_train_scaled, self.y_train)
-                except Exception as e:
-                    pass
                 
             else:
                 # Experienced Phase: chọn phase dựa trên scores
@@ -547,13 +506,6 @@ class PUMAOptimizer:
                 if current_best_fitness > best_fitness:
                     best_individual = population[best_idx].copy() 
                     best_fitness = current_best_fitness
-                    
-                    # Cập nhật mô hình tốt nhất
-                    try:
-                        self.best_model = self.create_model_from_params(best_individual)
-                        self.best_model.fit(self.X_train_scaled, self.y_train)
-                    except Exception as e:
-                        pass
                 
                 # Tính lại experience scores cho iteration tiếp theo
                 self.calculate_experience_scores(generation + 1)
@@ -588,6 +540,5 @@ class PUMAOptimizer:
         
         return {
             'best_params': self.best_individual, 
-            'best_score': self.best_score,
-            'best_model': self.best_model
+            'best_score': self.best_score
         }
